@@ -1,0 +1,6 @@
+{
+  "name": "Dineview Menu",
+  "description": "Digital view-only menu for Dineview restaurant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

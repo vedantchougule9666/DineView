@@ -1,0 +1,17 @@
+{
+  "collections": [
+    {
+      "name": "orders",
+      "description": "Customer orders",
+      "rules": [
+        {
+          "match": "{orderId}",
+          "allow": {
+            "read": "true",
+            "write": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

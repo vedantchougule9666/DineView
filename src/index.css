@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-serif: "Playfair Display", ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  
+  --color-bg-primary: #FAF9F6;
+  --color-text-primary: #1C1C1C;
+  --color-text-secondary: #706F6C;
+  --color-text-muted: #A19F9A;
+  --color-accent: #8B7355;
+  --color-border: #E5E3DF;
+}
+
+@layer base {
+  body {
+    @apply font-sans bg-bg-primary text-text-primary;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif;
+  }
+
+  [dir="rtl"], .rtl-layout {
+    text-align: right;
+  }
+
+  [dir="rtl"] .text-left, .rtl-layout .text-left {
+    text-align: right;
+  }
+
+  [dir="rtl"] .text-right, .rtl-layout .text-right {
+    text-align: left;
+  }
+
+  [lang="ur"] {
+    font-family: "Noto Nastaliq Urdu", "Noto Sans Arabic", "Segoe UI", Tahoma, sans-serif;
+  }
+}
+
+@utility hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #qr-print-area, #qr-print-area * {
+    visibility: visible;
+  }
+  #qr-print-area {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 16px;
+    background: white;
+    z-index: 9999;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
