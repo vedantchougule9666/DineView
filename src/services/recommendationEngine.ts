@@ -46,12 +46,51 @@ export interface ConversationContext {
   lastRecommendedDishIds?: string[];
 }
 
+export interface LastOrderItem {
+  id: string;
+  name: string;
+  quantity: number;
+  price: number;
+  calories?: number;
+  image?: string;
+}
+
+export interface LastOrderSummary {
+  orderId?: string;
+  date: string;
+  table: string;
+  total: number;
+  items: LastOrderItem[];
+}
+
+export interface SameOrDifferentSummary {
+  previousDish: MenuItem;
+  same: {
+    dish: MenuItem;
+    reason: string;
+  };
+  different: {
+    sameCategoryDish: MenuItem;
+    categoryName: string;
+    priceDiff: number;
+    calorieDiff: number;
+    reason: string;
+    pairingDish: MenuItem;
+    pairingCategoryName: string;
+    pairingPriceDiff: number;
+    pairingCalorieDiff: number;
+    pairingReason: string;
+  };
+}
+
 export interface AssistantResponse {
-  type: 'recommendations' | 'dish_fact' | 'comparison' | 'meal_plan' | 'allergy_info' | 'clarification';
+  type: 'recommendations' | 'dish_fact' | 'comparison' | 'meal_plan' | 'allergy_info' | 'clarification' | 'last_order' | 'same_or_different';
   intro: string;
   recommendations?: RecommendationResult[];
   comparison?: ComparisonResult;
   mealPlan?: MealPlanResult;
+  lastOrder?: LastOrderSummary;
+  sameOrDifferent?: SameOrDifferentSummary;
   allergyNotice?: string;
   followUpSuggestion?: string;
   suggestedChips?: string[];
@@ -122,6 +161,74 @@ export function getFoodRecommendations(
   const normalizedQuery = query.toLowerCase().trim();
   const allItems = getAllItems(categories);
   const context: ConversationContext = { ...prevContext };
+
+  // -------------------------------------------------------------
+  // FEATURE: "SAME OR DIFFERENT" QUERY
+  // -------------------------------------------------------------
+  if (/\b(same\s*or\s*different|same\s*or\s*new|same\s*or\s*something|same\s*vs\s*different|reorder\s*or\s*try)\b/i.test(normalizedQuery)) {
+    const prevDishId = context.lastMentionedDishId || 's4';
+    const prevDishItem = allItems.find(i => i.item.id === prevDishId) || allItems.find(i => i.item.id === 's4')!;
+    const prevDish = prevDishItem.item;
+    const prevCategory = prevDishItem.categoryId;
+
+    // 1 same-category different dish
+    const sameCatDiffItem = allItems.find(i => i.categoryId === prevCategory && i.item.id !== prevDish.id) 
+      || allItems.find(i => i.item.id !== prevDish.id)!;
+    const sameCategoryDish = sameCatDiffItem.item;
+    const priceDiff = sameCategoryDish.price - prevDish.price;
+    const calorieDiff = sameCategoryDish.calories - prevDish.calories;
+
+    // 1 dessert / drink pairing
+    const pairingItem = allItems.find(i => i.categoryId === 'desserts' && i.item.id !== prevDish.id)
+      || allItems.find(i => i.categoryId === 'drinks' && i.item.id !== prevDish.id)!;
+    const pairingDish = pairingItem.item;
+    const pairingPriceDiff = pairingDish.price - prevDish.price;
+    const pairingCalorieDiff = pairingDish.calories - prevDish.calories;
+
+    return {
+      type: 'same_or_different',
+      intro: `Deciding between familiar comfort and new culinary discoveries? Here is your curated choice: Reorder the same favorite dish, or explore a distinct creation in the same course alongside a curated pairing:`,
+      sameOrDifferent: {
+        previousDish: prevDish,
+        same: {
+          dish: prevDish,
+          reason: `Reorder your verified favorite: ${prevDish.name} (₹${prevDish.price.toLocaleString('en-IN')}, ${prevDish.calories} kcal). Perfectly prepared to order by our kitchen.`
+        },
+        different: {
+          sameCategoryDish,
+          categoryName: sameCatDiffItem.categoryName,
+          priceDiff,
+          calorieDiff,
+          reason: `Because you had ${prevDish.name}, experience ${sameCategoryDish.name} for an exciting alternative in the same course.`,
+          pairingDish,
+          pairingCategoryName: pairingItem.categoryName,
+          pairingPriceDiff,
+          pairingCalorieDiff,
+          pairingReason: `Because you had ${prevDish.name}, pair with ${pairingDish.name} to harmonize your dining palate.`
+        }
+      },
+      recommendations: [
+        {
+          dish: prevDish,
+          reason: `Same: Reorder favorite ${prevDish.name}`,
+          whyBullets: [`Price: ₹${prevDish.price.toLocaleString('en-IN')}`, `Calories: ${prevDish.calories} kcal`]
+        },
+        {
+          dish: sameCategoryDish,
+          reason: `Different (${sameCatDiffItem.categoryName}): ${sameCategoryDish.name} (${priceDiff >= 0 ? `+₹${priceDiff}` : `-₹${Math.abs(priceDiff)}`}, ${calorieDiff >= 0 ? `+${calorieDiff}` : `${calorieDiff}`} kcal)`,
+          whyBullets: [`Category: ${sameCatDiffItem.categoryName}`, `Price: ₹${sameCategoryDish.price.toLocaleString('en-IN')}`, `Because you had ${prevDish.name}`]
+        },
+        {
+          dish: pairingDish,
+          reason: `Pairing (${pairingItem.categoryName}): ${pairingDish.name}`,
+          whyBullets: [`Category: ${pairingItem.categoryName}`, `Price: ₹${pairingDish.price.toLocaleString('en-IN')}`, `Because you had ${prevDish.name}`]
+        }
+      ],
+      followUpSuggestion: "Tap 'VIEW DISH' on any selection to inspect details or launch 3D/AR preview.",
+      suggestedChips: [`Reorder ${prevDish.name}`, `View ${sameCategoryDish.name}`, `View ${pairingDish.name}`, 'Something under ₹1000'],
+      conversationContext: { ...context, lastMentionedDishId: sameCategoryDish.id }
+    };
+  }
 
   // -------------------------------------------------------------
   // 1. FEATURE 14: AR-AWARE INQUIRIES

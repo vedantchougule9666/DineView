@@ -15,6 +15,7 @@ import HomePage from './pages/customer/HomePage';
 const ItemDetailsPage = React.lazy(() => import('./pages/customer/ItemDetailsPage'));
 const CartPage = React.lazy(() => import('./pages/customer/CartPage'));
 const OrderStatusPage = React.lazy(() => import('./pages/customer/OrderStatusPage'));
+const SmartConnectPage = React.lazy(() => import('./pages/customer/SmartConnectPage'));
 
 // Lazy-load all Admin pages (keeps admin code out of customer bundle)
 const AdminLayout = React.lazy(() => import('./pages/admin/AdminLayout'));
@@ -23,6 +24,11 @@ const AdminDashboard = React.lazy(() => import('./pages/admin/AdminDashboard'));
 const MenuManager = React.lazy(() => import('./pages/admin/MenuManager'));
 const OrderManager = React.lazy(() => import('./pages/admin/OrderManager'));
 const TableManager = React.lazy(() => import('./pages/admin/TableManager'));
+
+// Lazy-load Kitchen Manager pages
+const ManagerLayout = React.lazy(() => import('./pages/manager/ManagerLayout'));
+const ManagerLogin = React.lazy(() => import('./pages/manager/ManagerLogin'));
+const ManagerOrdersPage = React.lazy(() => import('./pages/manager/ManagerOrdersPage'));
 
 const LoadingFallback = () => (
   <div className="flex h-screen w-full items-center justify-center bg-bg-primary">
@@ -55,6 +61,7 @@ export default function App() {
                         <Route path="item/:id" element={<ItemDetailsPage />} />
                         <Route path="cart" element={<CartPage />} />
                         <Route path="order/:id" element={<OrderStatusPage />} />
+                        <Route path="connect" element={<SmartConnectPage />} />
                       </Route>
 
                       {/* Admin Routes */}
@@ -64,6 +71,13 @@ export default function App() {
                         <Route path="menu" element={<MenuManager />} />
                         <Route path="orders" element={<OrderManager />} />
                         <Route path="tables" element={<TableManager />} />
+                      </Route>
+
+                      {/* Kitchen Manager Routes */}
+                      <Route path="/manager/login" element={<ManagerLogin />} />
+                      <Route path="/manager" element={<ManagerLayout />}>
+                        <Route index element={<ManagerOrdersPage />} />
+                        <Route path="orders" element={<ManagerOrdersPage />} />
                       </Route>
 
                       {/* Catch-all fallback */}

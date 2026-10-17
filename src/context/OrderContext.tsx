@@ -14,12 +14,36 @@ export interface Order {
   createdAt: string;
   tableId?: string;
   tableName?: string;
+  customerPhone?: string;
+  phoneVerified?: boolean;
+  guestUid?: string;
+  managerConfirmed?: boolean;
+  managerConfirmedAt?: string;
+  managerConfirmedBy?: string;
+  kitchenNotes?: string;
 }
 
 interface OrderContextType {
   orders: Order[];
-  placeOrder: (items: CartItem[], total: number, tableId?: string, tableName?: string) => string;
+  placeOrder: (
+    items: CartItem[],
+    total: number,
+    tableId?: string,
+    tableName?: string,
+    customerPhone?: string
+  ) => string;
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
+  updateOrderItems: (
+    orderId: string,
+    items: CartItem[],
+    total: number,
+    kitchenNotes?: string
+  ) => Promise<void>;
+  confirmOrder: (
+    orderId: string,
+    managerName?: string,
+    kitchenNotes?: string
+  ) => Promise<void>;
   getOrderById: (orderId: string) => Order | undefined;
 }
 
@@ -30,9 +54,10 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
 
   useEffect(() => {
-    // Only subscribe to the global orders list if we are in the admin section
-    if (!location.pathname.startsWith('/admin')) {
-      setOrders([]); // Clear memory when leaving admin
+    // Subscribe to the global orders list if we are in admin or manager sections
+    const isStaffSection = location.pathname.startsWith('/admin') || location.pathname.startsWith('/manager');
+    if (!isStaffSection) {
+      setOrders([]); // Clear memory when leaving staff areas
       return;
     }
 
@@ -54,7 +79,13 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, [location.pathname]);
 
-  const placeOrder = (items: CartItem[], total: number, tableId?: string, tableName?: string) => {
+  const placeOrder = (
+    items: CartItem[],
+    total: number,
+    tableId?: string,
+    tableName?: string,
+    customerPhone?: string
+  ) => {
     const orderId = Math.random().toString(36).substring(2, 9).toUpperCase();
     const resolvedTableId = tableId && tableId.trim() ? tableId.trim() : 'COUNTER';
     const resolvedTableName = tableName && tableName.trim()
@@ -69,6 +100,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       createdAt: new Date().toISOString(),
       tableId: resolvedTableId,
       tableName: resolvedTableName,
+      customerPhone: customerPhone ? customerPhone.trim() : '',
+      phoneVerified: false,
     };
     
     // Save to Firestore
@@ -86,12 +119,54 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  const updateOrderItems = async (
+    orderId: string,
+    items: CartItem[],
+    total: number,
+    kitchenNotes?: string
+  ) => {
+    const payload: Partial<Order> = {
+      items,
+      total,
+    };
+    if (kitchenNotes !== undefined) {
+      payload.kitchenNotes = kitchenNotes;
+    }
+    await updateDoc(doc(db, 'orders', orderId), payload);
+  };
+
+  const confirmOrder = async (
+    orderId: string,
+    managerName = 'Kitchen Manager',
+    kitchenNotes?: string
+  ) => {
+    const payload: Partial<Order> = {
+      status: 'preparing',
+      managerConfirmed: true,
+      managerConfirmedAt: new Date().toISOString(),
+      managerConfirmedBy: managerName,
+    };
+    if (kitchenNotes !== undefined) {
+      payload.kitchenNotes = kitchenNotes;
+    }
+    await updateDoc(doc(db, 'orders', orderId), payload);
+  };
+
   const getOrderById = (orderId: string) => {
     return orders.find((o) => o.id === orderId);
   };
 
   return (
-    <OrderContext.Provider value={{ orders, placeOrder, updateOrderStatus, getOrderById }}>
+    <OrderContext.Provider
+      value={{
+        orders,
+        placeOrder,
+        updateOrderStatus,
+        updateOrderItems,
+        confirmOrder,
+        getOrderById,
+      }}
+    >
       {children}
     </OrderContext.Provider>
   );

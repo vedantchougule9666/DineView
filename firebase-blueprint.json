@@ -1,17 +1,69 @@
 {
-  "collections": [
-    {
-      "name": "orders",
-      "description": "Customer orders",
-      "rules": [
-        {
-          "match": "{orderId}",
-          "allow": {
-            "read": "true",
-            "write": "true"
-          }
-        }
-      ]
+  "entities": {
+    "Order": {
+      "title": "Order",
+      "description": "A dining order placed by a guest with items, total, table, phone, and kitchen status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "items": { "type": "array" },
+        "total": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "preparing", "ready", "completed", "cancelled"] },
+        "createdAt": { "type": "string" },
+        "tableId": { "type": "string" },
+        "tableName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "guestUid": { "type": "string" },
+        "managerConfirmed": { "type": "boolean" },
+        "managerConfirmedAt": { "type": "string" },
+        "managerConfirmedBy": { "type": "string" },
+        "kitchenNotes": { "type": "string" }
+      },
+      "required": ["id", "items", "total", "status", "createdAt"]
+    },
+    "CustomerProfile": {
+      "title": "CustomerProfile",
+      "description": "Customer dining profile with order history and favorite dishes for personalized recommendations",
+      "type": "object",
+      "properties": {
+        "phone": { "type": "string" },
+        "uid": { "type": "string" },
+        "firstSeenAt": { "type": "string" },
+        "lastOrderAt": { "type": "string" },
+        "totalOrders": { "type": "number" },
+        "totalSpent": { "type": "number" },
+        "favoriteDishIds": { "type": "array" },
+        "recentOrderIds": { "type": "array" },
+        "recentDishes": { "type": "array" },
+        "lastTableId": { "type": "string" }
+      },
+      "required": ["phone", "totalOrders", "totalSpent"]
+    },
+    "Table": {
+      "title": "Table",
+      "description": "Restaurant dining table for QR-based ordering",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "active"]
     }
-  ]
+  },
+  "firestore": {
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Collection of dining orders placed by customers and managed by staff"
+    },
+    "/customers/{phone}": {
+      "schema": "CustomerProfile",
+      "description": "Collection of customer profiles keyed by E.164 phone number"
+    },
+    "/tables/{tableId}": {
+      "schema": "Table",
+      "description": "Collection of dining tables and QR targets"
+    }
+  }
 }

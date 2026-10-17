@@ -1,9 +1,17 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // DineView Orders: Created by guests with real phone verification, confirmed/edited by kitchen managers
     match /orders/{orderId} {
       allow read, write: if true;
     }
+
+    // DineView Customer Profiles: Retains dining history, recent dishes, and visit count for AI Concierge
+    match /customers/{phone} {
+      allow read, write: if true;
+    }
+
+    // Restaurant Dining Tables and QR targets
     match /tables/{tableId} {
       allow read, write: if true;
     }

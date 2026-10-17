@@ -4,7 +4,6 @@ import path from "path";
 import os from "os";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
-import { MENU_DATA } from "./src/data/menu";
 
 export function getLocalIpAddress(): string {
   const ifaces = os.networkInterfaces();
@@ -28,18 +27,169 @@ export function getLocalIpAddress(): string {
   return fallback || "localhost";
 }
 
-const menuCatalog = MENU_DATA.flatMap((cat) =>
-  cat.items.map((item) => ({
-    id: item.id,
-    name: item.name,
-    category: cat.name,
-    description: item.description,
-    price: item.price,
-    calories: item.calories,
-    tags: item.tags?.map((t) => t.label) || [],
-    hasAR: Boolean(item.modelUrl),
-  }))
-);
+interface CatalogItem {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  price: number;
+  calories: number;
+  tags: string[];
+  hasAR: boolean;
+}
+
+const menuCatalog: CatalogItem[] = [
+  {
+    id: "s1",
+    name: "Truffle Arancini",
+    category: "starters",
+    description: "Crispy risotto balls infused with black truffle and parmesan, served with a roasted garlic aioli.",
+    price: 1500,
+    calories: 420,
+    tags: ["Vegetarian"],
+    hasAR: false,
+  },
+  {
+    id: "s2",
+    name: "Tuna Tartare",
+    category: "starters",
+    description: "Fresh Ahi tuna, avocado, cucumber, and a soy-ginger dressing, accompanied by crisp wonton chips.",
+    price: 1800,
+    calories: 310,
+    tags: ["Dairy Free"],
+    hasAR: false,
+  },
+  {
+    id: "s3",
+    name: "Heirloom Tomato Bruschetta",
+    category: "starters",
+    description: "Toasted artisanal sourdough topped with marinated heirloom tomatoes, fresh basil, and balsamic glaze.",
+    price: 1200,
+    calories: 250,
+    tags: ["Vegetarian", "Vegan"],
+    hasAR: false,
+  },
+  {
+    id: "s4",
+    name: "Burger",
+    category: "starters",
+    description: "A premium Wagyu beef patty layered with aged cheddar, caramelized onions, and house-made truffle aioli on a toasted artisanal brioche bun.",
+    price: 1800,
+    calories: 850,
+    tags: [],
+    hasAR: true,
+  },
+  {
+    id: "m1",
+    name: "Pan-Seared Scallops",
+    category: "main-courses",
+    description: "Jumbo sea scallops served over a bed of sweet corn puree, crispy pancetta, and micro-greens.",
+    price: 3500,
+    calories: 480,
+    tags: ["Gluten Free"],
+    hasAR: false,
+  },
+  {
+    id: "m2",
+    name: "Wagyu Ribeye Steak",
+    category: "main-courses",
+    description: "12oz Wagyu ribeye, perfectly marbled and grilled to order. Served with truffled mashed potatoes and asparagus.",
+    price: 650,
+    calories: 950,
+    tags: ["Gluten Free"],
+    hasAR: false,
+  },
+  {
+    id: "m3",
+    name: "Wild Mushroom Risotto",
+    category: "main-courses",
+    description: "Creamy Arborio rice with a blend of wild forest mushrooms, finished with white truffle oil and aged parmesan.",
+    price: 2500,
+    calories: 620,
+    tags: ["Vegetarian", "Gluten Free"],
+    hasAR: false,
+  },
+  {
+    id: "m4",
+    name: "Spicy Thai Basil Chicken",
+    category: "main-courses",
+    description: "Wok-tossed chicken breast with fresh basil, bell peppers, and chili, served over jasmine rice.",
+    price: 2000,
+    calories: 540,
+    tags: ["Spicy", "Dairy Free"],
+    hasAR: true,
+  },
+  {
+    id: "m5",
+    name: "Wood-Fired Margherita Pizza",
+    category: "main-courses",
+    description: "San Marzano tomato sauce, fresh buffalo mozzarella, fresh basil, and extra virgin olive oil on a slow-fermented wood-fired crust.",
+    price: 2200,
+    calories: 780,
+    tags: ["Vegetarian"],
+    hasAR: true,
+  },
+  {
+    id: "sd1",
+    name: "Roasted Brussels Sprouts",
+    category: "sides",
+    description: "Caramelized with balsamic reduction and tossed with toasted almonds.",
+    price: 850,
+    calories: 180,
+    tags: ["Vegetarian", "Vegan", "Gluten Free", "Contains Nuts"],
+    hasAR: false,
+  },
+  {
+    id: "sd2",
+    name: "Pommes Frites",
+    category: "sides",
+    description: "Thin-cut fries tossed in sea salt and rosemary, served with garlic aioli.",
+    price: 750,
+    calories: 380,
+    tags: ["Vegetarian"],
+    hasAR: false,
+  },
+  {
+    id: "d1",
+    name: "Valrhona Chocolate Fondant",
+    category: "desserts",
+    description: "Rich molten chocolate cake served with Madagascar vanilla bean gelato and raspberry coulis.",
+    price: 1500,
+    calories: 650,
+    tags: ["Vegetarian"],
+    hasAR: false,
+  },
+  {
+    id: "d2",
+    name: "Classic Tiramisu",
+    category: "desserts",
+    description: "Espresso-soaked ladyfingers layered with light mascarpone cream and dusted with cocoa powder.",
+    price: 1200,
+    calories: 450,
+    tags: ["Vegetarian"],
+    hasAR: false,
+  },
+  {
+    id: "dr1",
+    name: "Artisan Crafted Lemonade",
+    category: "drinks",
+    description: "Freshly squeezed lemons with a hint of lavender and sparkling water.",
+    price: 650,
+    calories: 120,
+    tags: ["Vegetarian", "Vegan", "Gluten Free"],
+    hasAR: false,
+  },
+  {
+    id: "dr2",
+    name: "Signature Negroni",
+    category: "drinks",
+    description: "Gin, Campari, and sweet vermouth, garnished with an orange peel.",
+    price: 1500,
+    calories: 190,
+    tags: ["Vegetarian", "Vegan"],
+    hasAR: false,
+  },
+];
 
 const SYSTEM_INSTRUCTION = `You are the DineView Culinary Concierge & AI Food Assistant for DineView, an upscale luxury restaurant.
 Your role is to guide guests, answer questions about flavor profiles, ingredients, allergens, and dietary needs, suggest dish pairings, compare dishes, and construct curated dining experiences.
@@ -65,7 +215,8 @@ CRITICAL RULES:
    - dr2 (Signature Negroni): Vegetarian, Vegan, contains alcohol.
    Always include a gentle safety disclaimer when allergies are mentioned ("Please inform your server of severe allergies so our kitchen can take precautions").
 5. If the user asks in another language (e.g., Hindi, Spanish, French, etc.), reply warmly in that language!
-6. Always return a valid JSON object matching this schema:
+6. If Customer Dining Profile (Returning Guest) is provided, acknowledge their return warmly and answer questions about their previous dining history (recent dishes ordered, favorite items, and suggest pairings).
+7. Always return a valid JSON object matching this schema:
 {
   "intro": "Warm, professional, appetizing concierge response in 1-3 sentences",
   "recommendedDishIds": ["s4", "dr1"],
@@ -80,7 +231,7 @@ CRITICAL RULES:
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.NODE_ENV === "production" ? (Number(process.env.PORT) || 3000) : 3000;
 
   app.use(express.json());
 
@@ -115,7 +266,7 @@ async function startServer() {
       return res.status(500).json({ error: "GEMINI_API_KEY not configured" });
     }
 
-    const { message, history, lang } = req.body;
+    const { message, history, lang, customerContext } = req.body;
     if (!message || typeof message !== "string") {
       return res.status(400).json({ error: "Missing message string" });
     }
@@ -141,7 +292,18 @@ async function startServer() {
       }
     }
 
-    const userPromptWithContext = `User Request: "${message}"\n(Customer UI Language: ${lang || "en"})\n\nMenu Catalog:\n${JSON.stringify(menuCatalog, null, 2)}`;
+    let customerInfoNotice = "";
+    if (customerContext) {
+      customerInfoNotice = `\nCustomer Dining Profile (Returning Guest):
+- Phone: ${customerContext.phone || "Verified Guest"}
+- Total Prior Orders: ${customerContext.totalOrders || 1}
+- Recent Dishes Ordered: ${JSON.stringify(customerContext.recentDishes || [])}
+- Favorite Dish IDs: ${JSON.stringify(customerContext.favoriteDishIds || [])}
+If the guest asks "what did I order last time?", "reorder my favorites", or asks for pairings, reference their previous dishes directly!
+`;
+    }
+
+    const userPromptWithContext = `User Request: "${message}"\n(Customer UI Language: ${lang || "en"})${customerInfoNotice}\n\nMenu Catalog:\n${JSON.stringify(menuCatalog, null, 2)}`;
 
     conversationParts.push({
       role: "user",

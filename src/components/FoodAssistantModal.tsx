@@ -1,9 +1,26 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Send, Sparkles, ArrowRight, RotateCcw, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, Scale, UtensilsCrossed } from 'lucide-react';
+import { 
+  X, 
+  Send, 
+  Sparkles, 
+  ArrowRight, 
+  RotateCcw, 
+  AlertTriangle, 
+  HelpCircle, 
+  ChevronDown, 
+  ChevronUp, 
+  Scale, 
+  UtensilsCrossed,
+  Calendar,
+  MapPin,
+  CreditCard,
+  Repeat,
+  Shuffle
+} from 'lucide-react';
 import { useMenu } from '../context/MenuContext';
 import { useLanguage } from '../context/LanguageContext';
-import { getMenuItemName } from '../data/menu';
+import { getMenuItemName, MENU_DATA } from '../data/menu';
 import { formatCurrency } from '../utils/currency';
 import { 
   getFoodRecommendations, 
@@ -11,9 +28,17 @@ import {
   RecommendationResult,
   ConversationContext,
   ComparisonResult,
-  MealPlanResult
+  MealPlanResult,
+  LastOrderSummary,
+  SameOrDifferentSummary,
 } from '../services/recommendationEngine';
 import { saveMenuScrollPosition } from '../utils/scrollRestoration';
+import { 
+  getCustomerProfile, 
+  maskPhone, 
+  CustomerProfile, 
+  fetchLastCustomerOrder 
+} from '../services/customerService';
 
 interface ChatMessage {
   id: string;
@@ -66,6 +91,53 @@ export const FoodAssistantModal: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      try {
+        const phone = localStorage.getItem('dineview_phone');
+        if (phone) {
+          getCustomerProfile(phone).then((prof) => {
+            if (prof) {
+              setCustomerProfile(prof);
+              // If returning guest, personalize the welcome greeting if still on default
+              if (prof.recentDishes && prof.recentDishes.length > 0) {
+                const topDish = prof.recentDishes[0]?.name;
+                setMessages((prev) => {
+                  if (prev.length === 1 && prev[0].id === 'welcome') {
+                    return [
+                      {
+                        id: 'welcome',
+                        sender: 'assistant',
+                        response: {
+                          type: 'recommendations',
+                          intro: `Welcome back to DineView (${maskPhone(prof.phone)})! On your previous order, you enjoyed the ${topDish}. Would you like to reorder, find pairing suggestions, or explore our chef's newest creations?`,
+                          recommendations: [],
+                          followUpSuggestion: "Tap a quick prompt or ask any question:",
+                          suggestedChips: [
+                            'What did I order last time?',
+                            'Same or different?',
+                            `Recommend pairing for my ${topDish}`,
+                            'Recommend something spicy',
+                            'Build me a meal under ₹3000',
+                          ],
+                          conversationContext: {},
+                        },
+                        timestamp: new Date(),
+                      },
+                    ];
+                  }
+                  return prev;
+                });
+              }
+            }
+          });
+        }
+      } catch {}
+    }
+  }, [isOpen]);
+
   useEffect(() => {
     if (isOpen) {
       scrollToBottom();
@@ -93,6 +165,219 @@ export const FoodAssistantModal: React.FC = () => {
     setIsTyping(true);
 
     try {
+      // 1. "LAST TIME" QUERY:
+      // Fetch last order by orderedAt desc from customers/{phone}.recentDishes + orders where phone==,
+      // render items + date + table + total + View buttons.
+      const isLastOrderQuery = /\b(last\s*time|last\s*order|previous\s*order|past\s*order|what\s*(?:did\s*i|have\s*i)\s*order|what\s*was\s*my\s*last|order(?:ed)?\s*last\s*time)\b/i.test(trimmed);
+
+      if (isLastOrderQuery) {
+        const phone = localStorage.getItem('dineview_phone') || customerProfile?.phone || '';
+        if (!phone) {
+          const assistantResponse: AssistantResponse = {
+            type: 'clarification',
+            intro: "To view your previous order history, please place an order with your mobile number at checkout. Once recorded, I'll remember your exact dishes, table, and dining preferences right here!",
+            recommendations: [],
+            followUpSuggestion: "Would you like me to recommend our most popular chef selections today?",
+            suggestedChips: DEFAULT_SUGGESTED_PROMPTS,
+            conversationContext: contextRef.current,
+          };
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: 'assistant-' + Date.now(),
+              sender: 'assistant',
+              response: assistantResponse,
+              timestamp: new Date()
+            }
+          ]);
+          setIsTyping(false);
+          return;
+        }
+
+        const lastOrder = await fetchLastCustomerOrder(phone);
+        if (lastOrder && lastOrder.items && lastOrder.items.length > 0) {
+          contextRef.current = {
+            ...contextRef.current,
+            lastMentionedDishId: lastOrder.items[0].id,
+            lastRecommendedDishIds: lastOrder.items.map(i => i.id)
+          };
+
+          const allItems = categories.flatMap(c => c.items);
+          const recs: RecommendationResult[] = lastOrder.items.map((item): RecommendationResult | null => {
+            const dish = allItems.find(d => d.id === item.id) || MENU_DATA.flatMap(c => c.items).find(d => d.id === item.id);
+            if (!dish) return null;
+            return {
+              dish,
+              reason: `Quantity: ${item.quantity} • Total: ${formatCurrency(item.price * item.quantity)}`,
+              whyBullets: [
+                `Ordered on ${new Date(lastOrder.date).toLocaleDateString()}`,
+                `Table: ${lastOrder.table}`,
+                `Calories: ${dish.calories} kcal`,
+                dish.modelUrl ? '3D & AR table preview available' : 'Prepared fresh to order'
+              ]
+            };
+          }).filter((r): r is RecommendationResult => r !== null);
+
+          const assistantResponse: AssistantResponse = {
+            type: 'last_order',
+            intro: `Here is your last verified order at DineView (${maskPhone(phone)}):`,
+            lastOrder: {
+              orderId: lastOrder.orderId,
+              date: lastOrder.date,
+              table: lastOrder.table,
+              total: lastOrder.total,
+              items: lastOrder.items,
+            },
+            recommendations: recs,
+            followUpSuggestion: "Would you like to reorder the same favorites or explore something different?",
+            suggestedChips: [
+              'Same or different?',
+              'Recommend pairing for this',
+              'Something lighter',
+              'What should I try?'
+            ],
+            conversationContext: contextRef.current
+          };
+
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: 'assistant-' + Date.now(),
+              sender: 'assistant',
+              response: assistantResponse,
+              timestamp: new Date()
+            }
+          ]);
+          setIsTyping(false);
+          return;
+        } else {
+          const assistantResponse: AssistantResponse = {
+            type: 'clarification',
+            intro: `We don't have a recorded order history for ${maskPhone(phone)} yet. Once you place an order, your dining history and favorite dishes will appear here!`,
+            recommendations: [],
+            followUpSuggestion: "Would you like recommendations based on your taste preferences?",
+            suggestedChips: DEFAULT_SUGGESTED_PROMPTS,
+            conversationContext: contextRef.current
+          };
+
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: 'assistant-' + Date.now(),
+              sender: 'assistant',
+              response: assistantResponse,
+              timestamp: new Date()
+            }
+          ]);
+          setIsTyping(false);
+          return;
+        }
+      }
+
+      // 2. "SAME OR DIFFERENT" QUERY:
+      // Render Same (fav reorder) + Different (1 same-category different dish + 1 dessert/drink pairing with price/kcal diff + Because you had X). Ground only in MENU_DATA.
+      const isSameOrDifferentQuery = /\b(same\s*or\s*different|same\s*or\s*new|same\s*or\s*something|same\s*vs\s*different|reorder\s*or\s*try)\b/i.test(trimmed);
+
+      if (isSameOrDifferentQuery) {
+        const allFlatItems = categories.flatMap(c => c.items);
+        const prevId = contextRef.current.lastMentionedDishId 
+          || customerProfile?.favoriteDishIds?.[0] 
+          || customerProfile?.recentDishes?.[0]?.id 
+          || 's4';
+        
+        const dishX = allFlatItems.find(i => i.id === prevId) 
+          || allFlatItems.find(i => i.id === 's4') 
+          || MENU_DATA[0].items[0];
+
+        // Category of dishX
+        const catX = categories.find(c => c.items.some(i => i.id === dishX.id)) || categories[0];
+
+        // 1 same-category different dish
+        const sameCatCandidates = catX.items.filter(i => i.id !== dishX.id);
+        const sameCategoryDish = sameCatCandidates[0] || allFlatItems.find(i => i.id !== dishX.id) || dishX;
+        const priceDiff = sameCategoryDish.price - dishX.price;
+        const calorieDiff = sameCategoryDish.calories - dishX.calories;
+
+        // 1 dessert / drink pairing
+        const dessertCat = categories.find(c => c.id === 'desserts');
+        const drinksCat = categories.find(c => c.id === 'drinks');
+        const isDessertX = catX.id === 'desserts';
+        const pairingPool = isDessertX ? (drinksCat?.items || []) : (dessertCat?.items || drinksCat?.items || []);
+        const pairingDish = pairingPool.find(i => i.id !== dishX.id && i.id !== sameCategoryDish.id)
+          || allFlatItems.find(i => i.id !== dishX.id && i.id !== sameCategoryDish.id)
+          || allFlatItems[0];
+        const pairingCat = categories.find(c => c.items.some(i => i.id === pairingDish.id))?.name || 'Pairing';
+        const pairingPriceDiff = pairingDish.price - dishX.price;
+        const pairingCalorieDiff = pairingDish.calories - dishX.calories;
+
+        contextRef.current = {
+          ...contextRef.current,
+          lastMentionedDishId: sameCategoryDish.id,
+          lastRecommendedDishIds: [dishX.id, sameCategoryDish.id, pairingDish.id]
+        };
+
+        const assistantResponse: AssistantResponse = {
+          type: 'same_or_different',
+          intro: `Deciding between familiar comfort and new culinary discoveries? Here is your curated choice: Reorder the same favorite dish you enjoyed, or explore a distinct creation in the same course alongside a complementary pairing:`,
+          sameOrDifferent: {
+            previousDish: dishX,
+            same: {
+              dish: dishX,
+              reason: `Reorder your favorite ${dishX.name} (${formatCurrency(dishX.price)}, ${dishX.calories} kcal). Perfectly prepared to order just as you enjoyed last time.`
+            },
+            different: {
+              sameCategoryDish,
+              categoryName: catX.name,
+              priceDiff,
+              calorieDiff,
+              reason: `Because you had ${dishX.name}, experience ${sameCategoryDish.name} (${formatCurrency(sameCategoryDish.price)}, ${sameCategoryDish.calories} kcal) for a fresh take in ${catX.name}.`,
+              pairingDish,
+              pairingCategoryName: pairingCat,
+              pairingPriceDiff,
+              pairingCalorieDiff,
+              pairingReason: `Because you had ${dishX.name}, pair with ${pairingDish.name} (${formatCurrency(pairingDish.price)}, ${pairingDish.calories} kcal) for a harmonious multi-course finish.`
+            }
+          },
+          recommendations: [
+            {
+              dish: dishX,
+              reason: `Same: Reorder favorite ${dishX.name}`,
+              whyBullets: [`Price: ${formatCurrency(dishX.price)}`, `${dishX.calories} kcal`, `Previous favorite`]
+            },
+            {
+              dish: sameCategoryDish,
+              reason: `Different (${catX.name}): ${sameCategoryDish.name} (${priceDiff >= 0 ? `+${formatCurrency(priceDiff)}` : `-${formatCurrency(Math.abs(priceDiff))}`}, ${calorieDiff >= 0 ? `+${calorieDiff}` : `${calorieDiff}`} kcal)`,
+              whyBullets: [`Course: ${catX.name}`, `Price: ${formatCurrency(sameCategoryDish.price)}`, `Because you had ${dishX.name}`]
+            },
+            {
+              dish: pairingDish,
+              reason: `Pairing (${pairingCat}): ${pairingDish.name}`,
+              whyBullets: [`Course: ${pairingCat}`, `Price: ${formatCurrency(pairingDish.price)}`, `Because you had ${dishX.name}`]
+            }
+          ],
+          followUpSuggestion: "Tap 'VIEW DISH' on any card to inspect ingredients or preview in 3D/AR.",
+          suggestedChips: [
+            `Reorder ${dishX.name}`,
+            `View ${sameCategoryDish.name}`,
+            `View ${pairingDish.name}`,
+            'Something under ₹1000'
+          ],
+          conversationContext: contextRef.current
+        };
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: 'assistant-' + Date.now(),
+            sender: 'assistant',
+            response: assistantResponse,
+            timestamp: new Date()
+          }
+        ]);
+        setIsTyping(false);
+        return;
+      }
+
       // Build conversation history for context
       const history = newMessages
         .filter(m => (m.sender === 'user' && m.text) || (m.sender === 'assistant' && m.response?.intro))
@@ -102,13 +387,23 @@ export const FoodAssistantModal: React.FC = () => {
           content: m.sender === 'user' ? m.text! : m.response!.intro
         }));
 
+      const customerCtx = customerProfile
+        ? {
+            phone: maskPhone(customerProfile.phone),
+            totalOrders: customerProfile.totalOrders,
+            recentDishes: customerProfile.recentDishes,
+            favoriteDishIds: customerProfile.favoriteDishIds,
+          }
+        : undefined;
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: trimmed,
           history,
-          lang
+          lang,
+          customerContext: customerCtx,
         })
       });
 
@@ -287,6 +582,12 @@ export const FoodAssistantModal: React.FC = () => {
                 <p className="font-serif text-xs text-text-secondary italic mt-0.5">
                   "Let us help you choose."
                 </p>
+                {customerProfile && (
+                  <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-accent/10 border border-accent/25 text-[10px] font-bold text-accent">
+                    <UtensilsCrossed className="w-3 h-3" />
+                    <span>Welcome back ({maskPhone(customerProfile.phone)}) • {customerProfile.totalOrders} {customerProfile.totalOrders === 1 ? 'visit' : 'visits'}</span>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-1">
@@ -419,8 +720,303 @@ export const FoodAssistantModal: React.FC = () => {
                         </div>
                       )}
 
+                      {/* FEATURE: Previous Order Card (Last Time Query) */}
+                      {msg.response?.lastOrder && (
+                        <div className="bg-white border border-border rounded-sm p-4 shadow-sm space-y-3.5">
+                          {/* Header */}
+                          <div className="flex items-center justify-between pb-2.5 border-b border-border">
+                            <div className="flex items-center gap-2">
+                              <UtensilsCrossed className="w-4 h-4 text-accent" />
+                              <h4 className="font-serif text-sm font-bold text-text-primary uppercase tracking-wider">
+                                Previous Dining Record
+                              </h4>
+                            </div>
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-accent/15 text-accent border border-accent/25">
+                              {msg.response.lastOrder.orderId ? `Order #${msg.response.lastOrder.orderId}` : 'Last Order'}
+                            </span>
+                          </div>
+
+                          {/* Metadata: Date, Table, Total */}
+                          <div className="grid grid-cols-3 gap-2 p-2.5 bg-bg-primary rounded-xs border border-border/60 text-xs">
+                            <div className="flex flex-col">
+                              <span className="text-[9px] uppercase tracking-wider font-bold text-text-muted flex items-center gap-1">
+                                <Calendar className="w-2.5 h-2.5 text-accent" /> Date
+                              </span>
+                              <span className="font-medium text-text-primary text-[11px] truncate mt-0.5">
+                                {new Date(msg.response.lastOrder.date).toLocaleDateString('en-IN', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            </div>
+
+                            <div className="flex flex-col">
+                              <span className="text-[9px] uppercase tracking-wider font-bold text-text-muted flex items-center gap-1">
+                                <MapPin className="w-2.5 h-2.5 text-accent" /> Table
+                              </span>
+                              <span className="font-medium text-text-primary text-[11px] truncate mt-0.5">
+                                {msg.response.lastOrder.table}
+                              </span>
+                            </div>
+
+                            <div className="flex flex-col text-end">
+                              <span className="text-[9px] uppercase tracking-wider font-bold text-text-muted flex items-center justify-end gap-1">
+                                <CreditCard className="w-2.5 h-2.5 text-accent" /> Total
+                              </span>
+                              <span className="font-serif font-bold text-accent text-xs mt-0.5">
+                                {formatCurrency(msg.response.lastOrder.total)}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Ordered Items List with View Buttons */}
+                          <div className="space-y-1.5 pt-1">
+                            <span className="text-[9px] uppercase tracking-wider font-bold text-text-muted block">
+                              Ordered Items ({msg.response.lastOrder.items.length})
+                            </span>
+                            <div className="divide-y divide-border/60">
+                              {msg.response.lastOrder.items.map((item, idx) => (
+                                <div key={idx} className="py-2.5 flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    {item.image && (
+                                      <img
+                                        src={item.image}
+                                        alt={item.name}
+                                        className="w-11 h-11 rounded-xs object-cover shrink-0 border border-border/70"
+                                      />
+                                    )}
+                                    <div className="min-w-0">
+                                      <span className="font-serif text-xs font-bold text-text-primary block truncate">
+                                        {item.name}
+                                      </span>
+                                      <span className="text-[10px] text-text-muted block">
+                                        Qty: {item.quantity} {item.price ? `• ${formatCurrency(item.price)}` : ''} {item.calories ? `• ${item.calories} kcal` : ''}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleViewDish(item.id)}
+                                    className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full border border-border hover:border-accent hover:bg-accent hover:text-white text-text-primary text-[9px] font-bold uppercase tracking-wider transition-all"
+                                  >
+                                    <span>View</span>
+                                    <ArrowRight className="w-3 h-3 rtl:rotate-180" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* FEATURE: Same or Different Card */}
+                      {msg.response?.sameOrDifferent && (
+                        <div className="bg-white border border-border rounded-sm p-4 shadow-sm space-y-4">
+                          {/* 1. THE SAME (Favorite Reorder) */}
+                          <div className="space-y-2 pb-3.5 border-b border-border">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <Repeat className="w-3.5 h-3.5 text-accent" />
+                                <h4 className="text-[10px] font-bold uppercase tracking-widest text-accent">
+                                  Same • Favorite Reorder
+                                </h4>
+                              </div>
+                              <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
+                                Proven Classic
+                              </span>
+                            </div>
+
+                            <div className="p-3 bg-bg-primary rounded-xs border border-border/70 flex gap-3 items-center justify-between">
+                              <div className="flex items-center gap-3 min-w-0">
+                                {msg.response.sameOrDifferent.same.dish.image && (
+                                  <img
+                                    src={msg.response.sameOrDifferent.same.dish.image}
+                                    alt={msg.response.sameOrDifferent.same.dish.name}
+                                    className="w-12 h-12 rounded-xs object-cover shrink-0 border border-border/80"
+                                  />
+                                )}
+                                <div className="min-w-0">
+                                  <h5 className="font-serif text-xs sm:text-sm font-bold text-text-primary truncate">
+                                    {msg.response.sameOrDifferent.same.dish.name}
+                                  </h5>
+                                  <div className="flex items-center gap-2 mt-0.5 text-[10px] text-text-secondary">
+                                    <span className="font-semibold text-text-primary">
+                                      {formatCurrency(msg.response.sameOrDifferent.same.dish.price)}
+                                    </span>
+                                    <span>•</span>
+                                    <span>{msg.response.sameOrDifferent.same.dish.calories} kcal</span>
+                                  </div>
+                                  <p className="text-[10px] text-text-muted italic mt-0.5 line-clamp-1">
+                                    "{msg.response.sameOrDifferent.same.reason}"
+                                  </p>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleViewDish(msg.response!.sameOrDifferent!.same.dish.id)}
+                                className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full border border-border hover:border-text-primary hover:bg-text-primary hover:text-white text-text-primary text-[9px] font-bold uppercase tracking-wider transition-all"
+                              >
+                                <span>View</span>
+                                <ArrowRight className="w-3 h-3 rtl:rotate-180" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* 2. SOMETHING DIFFERENT */}
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <Shuffle className="w-3.5 h-3.5 text-accent" />
+                                <h4 className="text-[10px] font-bold uppercase tracking-widest text-accent">
+                                  Something Different
+                                </h4>
+                              </div>
+                              <span className="text-[9px] font-medium text-text-muted italic">
+                                Because you had {msg.response.sameOrDifferent.previousDish.name}
+                              </span>
+                            </div>
+
+                            {/* 1 Same-Category Different Dish */}
+                            <div className="p-3 bg-bg-primary rounded-xs border border-border/70 space-y-2">
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span className="font-bold uppercase tracking-wider text-text-muted">
+                                  1. Alternative in {msg.response.sameOrDifferent.different.categoryName}
+                                </span>
+                                <div className="flex items-center gap-1.5 font-sans font-semibold">
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] ${
+                                    msg.response.sameOrDifferent.different.priceDiff > 0 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                                  }`}>
+                                    {msg.response.sameOrDifferent.different.priceDiff === 0
+                                      ? 'Same price'
+                                      : msg.response.sameOrDifferent.different.priceDiff > 0
+                                      ? `+${formatCurrency(msg.response.sameOrDifferent.different.priceDiff)}`
+                                      : `-${formatCurrency(Math.abs(msg.response.sameOrDifferent.different.priceDiff))}`}
+                                  </span>
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] ${
+                                    msg.response.sameOrDifferent.different.calorieDiff > 0 ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
+                                  }`}>
+                                    {msg.response.sameOrDifferent.different.calorieDiff === 0
+                                      ? 'Same kcal'
+                                      : msg.response.sameOrDifferent.different.calorieDiff > 0
+                                      ? `+${msg.response.sameOrDifferent.different.calorieDiff} kcal`
+                                      : `${msg.response.sameOrDifferent.different.calorieDiff} kcal`}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex gap-3 items-center justify-between">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  {msg.response.sameOrDifferent.different.sameCategoryDish.image && (
+                                    <img
+                                      src={msg.response.sameOrDifferent.different.sameCategoryDish.image}
+                                      alt={msg.response.sameOrDifferent.different.sameCategoryDish.name}
+                                      className="w-11 h-11 rounded-xs object-cover shrink-0 border border-border/80"
+                                    />
+                                  )}
+                                  <div className="min-w-0">
+                                    <h5 className="font-serif text-xs sm:text-sm font-bold text-text-primary truncate">
+                                      {msg.response.sameOrDifferent.different.sameCategoryDish.name}
+                                    </h5>
+                                    <div className="flex items-center gap-2 mt-0.5 text-[10px] text-text-secondary">
+                                      <span className="font-semibold text-text-primary">
+                                        {formatCurrency(msg.response.sameOrDifferent.different.sameCategoryDish.price)}
+                                      </span>
+                                      <span>•</span>
+                                      <span>{msg.response.sameOrDifferent.different.sameCategoryDish.calories} kcal</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleViewDish(msg.response!.sameOrDifferent!.different.sameCategoryDish.id)}
+                                  className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full border border-border hover:border-text-primary hover:bg-text-primary hover:text-white text-text-primary text-[9px] font-bold uppercase tracking-wider transition-all"
+                                >
+                                  <span>View</span>
+                                  <ArrowRight className="w-3 h-3 rtl:rotate-180" />
+                                </button>
+                              </div>
+
+                              <p className="text-[10px] text-text-secondary italic pt-1 border-t border-border/50">
+                                "{msg.response.sameOrDifferent.different.reason}"
+                              </p>
+                            </div>
+
+                            {/* 1 Dessert / Drink Pairing */}
+                            <div className="p-3 bg-bg-primary rounded-xs border border-border/70 space-y-2">
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span className="font-bold uppercase tracking-wider text-text-muted">
+                                  2. Curated {msg.response.sameOrDifferent.different.pairingCategoryName} Pairing
+                                </span>
+                                <div className="flex items-center gap-1.5 font-sans font-semibold">
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] ${
+                                    msg.response.sameOrDifferent.different.pairingPriceDiff > 0 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                                  }`}>
+                                    {msg.response.sameOrDifferent.different.pairingPriceDiff === 0
+                                      ? 'Same price'
+                                      : msg.response.sameOrDifferent.different.pairingPriceDiff > 0
+                                      ? `+${formatCurrency(msg.response.sameOrDifferent.different.pairingPriceDiff)}`
+                                      : `-${formatCurrency(Math.abs(msg.response.sameOrDifferent.different.pairingPriceDiff))}`}
+                                  </span>
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] ${
+                                    msg.response.sameOrDifferent.different.pairingCalorieDiff > 0 ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
+                                  }`}>
+                                    {msg.response.sameOrDifferent.different.pairingCalorieDiff === 0
+                                      ? 'Same kcal'
+                                      : msg.response.sameOrDifferent.different.pairingCalorieDiff > 0
+                                      ? `+${msg.response.sameOrDifferent.different.pairingCalorieDiff} kcal`
+                                      : `${msg.response.sameOrDifferent.different.pairingCalorieDiff} kcal`}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex gap-3 items-center justify-between">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  {msg.response.sameOrDifferent.different.pairingDish.image && (
+                                    <img
+                                      src={msg.response.sameOrDifferent.different.pairingDish.image}
+                                      alt={msg.response.sameOrDifferent.different.pairingDish.name}
+                                      className="w-11 h-11 rounded-xs object-cover shrink-0 border border-border/80"
+                                    />
+                                  )}
+                                  <div className="min-w-0">
+                                    <h5 className="font-serif text-xs sm:text-sm font-bold text-text-primary truncate">
+                                      {msg.response.sameOrDifferent.different.pairingDish.name}
+                                    </h5>
+                                    <div className="flex items-center gap-2 mt-0.5 text-[10px] text-text-secondary">
+                                      <span className="font-semibold text-text-primary">
+                                        {formatCurrency(msg.response.sameOrDifferent.different.pairingDish.price)}
+                                      </span>
+                                      <span>•</span>
+                                      <span>{msg.response.sameOrDifferent.different.pairingDish.calories} kcal</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleViewDish(msg.response!.sameOrDifferent!.different.pairingDish.id)}
+                                  className="shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full border border-border hover:border-text-primary hover:bg-text-primary hover:text-white text-text-primary text-[9px] font-bold uppercase tracking-wider transition-all"
+                                >
+                                  <span>View</span>
+                                  <ArrowRight className="w-3 h-3 rtl:rotate-180" />
+                                </button>
+                              </div>
+
+                              <p className="text-[10px] text-text-secondary italic pt-1 border-t border-border/50">
+                                "{msg.response.sameOrDifferent.different.pairingReason}"
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Recommendation Cards */}
-                      {msg.response?.recommendations && msg.response.recommendations.length > 0 && (
+                      {msg.response?.recommendations && msg.response.recommendations.length > 0 && !msg.response.lastOrder && !msg.response.sameOrDifferent && (
                         <div className="space-y-3.5 pt-1">
                           {msg.response.recommendations.map((rec: RecommendationResult, rIdx: number) => {
                             const displayName = getMenuItemName(rec.dish, lang);
