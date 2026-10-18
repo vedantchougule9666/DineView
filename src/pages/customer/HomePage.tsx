@@ -16,6 +16,13 @@ export default function HomePage() {
   const { lang, t } = useOutletContext<{ lang: string; t: Record<string, string>; isRTL?: boolean }>();
   const isRestoringScrollRef = useRef(false);
 
+  // Synchronize activeCategory when categories list updates from Firestore
+  useEffect(() => {
+    if (categories.length > 0 && (!activeCategory || !categories.some(c => c.id === activeCategory))) {
+      setActiveCategory(categories[0].id);
+    }
+  }, [categories, activeCategory]);
+
   // Restore saved scroll position when returning from Item Details
   useEffect(() => {
     const savedY = getAndClearMenuScrollPosition();
@@ -151,15 +158,22 @@ export default function HomePage() {
 
       {/* Main Menu Content */}
       <main className="max-w-4xl mx-auto px-6 md:px-12 pb-24 w-full">
-        {categories.map((category) => (
-          <MenuSection
-            key={category.id}
-            category={category}
-            ref={(el) => (sectionRefs.current[category.id] = el)}
-            lang={lang}
-            t={t}
-          />
-        ))}
+        {categories.length === 0 ? (
+          <div className="py-24 text-center">
+            <div className="inline-block w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin mb-4" />
+            <p className="text-text-secondary text-sm font-serif">Loading chef's selections...</p>
+          </div>
+        ) : (
+          categories.map((category) => (
+            <MenuSection
+              key={category.id}
+              category={category}
+              ref={(el) => (sectionRefs.current[category.id] = el)}
+              lang={lang}
+              t={t}
+            />
+          ))
+        )}
       </main>
 
       {/* Locations Section */}

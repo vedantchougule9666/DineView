@@ -46,7 +46,7 @@ export interface MenuContextType {
 
 const MenuContext = createContext<MenuContextType | undefined>(undefined);
 
-// Dev fallback categories (never stored in localStorage)
+// Dev / offline fallback categories (never stored in localStorage)
 const getDevFallbackCategories = (): MenuCategory[] => {
   return MENU_DATA.map((cat, idx) => ({
     ...cat,
@@ -56,10 +56,10 @@ const getDevFallbackCategories = (): MenuCategory[] => {
 };
 
 export function MenuProvider({ children }: { children: ReactNode }) {
-  // Source of truth: Firestore first, MENU_DATA as fallback only in dev
-  const isDev = Boolean(import.meta.env?.DEV);
+  // Source of truth: live Firestore /menu/categories via onSnapshot;
+  // Initialize with fallback in memory to avoid empty menu cards on slow network/offline
   const [categories, setCategories] = useState<MenuCategory[]>(() => {
-    return isDev ? getDevFallbackCategories() : [];
+    return getDevFallbackCategories();
   });
 
   const categoriesRef = useRef<MenuCategory[]>(categories);
@@ -98,13 +98,12 @@ export function MenuProvider({ children }: { children: ReactNode }) {
     }
   }, [broadcastUpdate]);
 
-  // Seed default menu to Firestore if collection is empty
+  // Seed default menu to Firestore if collection or /menu/categories is empty
   const seedFirestoreIfEmpty = useCallback(async () => {
     try {
-      const colRef = collection(db, 'menu');
-      const snap = await getDocs(colRef);
-      if (snap.empty) {
-        console.log('[MenuContext] Firestore /menu is empty. Seeding initial categories...');
+      const catDoc = await getDoc(doc(db, 'menu', 'categories'));
+      if (!catDoc.exists() || !catDoc.data()?.categories?.length) {
+        console.log('[MenuContext] Firestore /menu/categories is empty. Seeding initial categories...');
         const initialList = getDevFallbackCategories();
         for (let idx = 0; idx < initialList.length; idx++) {
           const cat = initialList[idx];
@@ -136,12 +135,27 @@ export function MenuProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, []);
 
-  // Re-fetch latest menu from Firestore
+  // Re-fetch latest menu from Firestore /menu/categories
   const refreshMenu = useCallback(async () => {
     invalidateCache();
 
+    // 1. Try reading direct /menu/categories doc first
     try {
-      // 1. Try querying /menu ordered by position
+      const catDoc = await getDoc(doc(db, 'menu', 'categories'));
+      if (catDoc.exists()) {
+        const d = catDoc.data();
+        if (d?.categories && Array.isArray(d.categories) && d.categories.length > 0) {
+          applyCategoriesUpdate(d.categories, true);
+          console.log('[MenuContext] snapshot size ->', d.categories.length);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('[MenuContext] refreshMenu doc error:', err);
+    }
+
+    // 2. Try querying /menu ordered by position
+    try {
       const menuQuery = query(collection(db, 'menu'), orderBy('position'));
       const snapshot = await getDocs(menuQuery);
       
@@ -166,30 +180,15 @@ export function MenuProvider({ children }: { children: ReactNode }) {
 
       if (fetchedCats.length > 0) {
         applyCategoriesUpdate(fetchedCats, true);
-        console.log('[MenuContext] snapshot ->', fetchedCats.length);
+        console.log('[MenuContext] snapshot size ->', fetchedCats.length);
         return;
       }
     } catch (err) {
       console.warn('[MenuContext] refreshMenu query error:', err);
     }
-
-    // 2. Direct fallback to /menu/categories doc
-    try {
-      const catDoc = await getDoc(doc(db, 'menu', 'categories'));
-      if (catDoc.exists()) {
-        const d = catDoc.data();
-        if (d?.categories && Array.isArray(d.categories) && d.categories.length > 0) {
-          applyCategoriesUpdate(d.categories, true);
-          console.log('[MenuContext] snapshot ->', d.categories.length);
-          return;
-        }
-      }
-    } catch (err) {
-      console.warn('[MenuContext] refreshMenu doc error:', err);
-    }
   }, [invalidateCache, applyCategoriesUpdate]);
 
-  // Firestore onSnapshot listener on collection(db, 'menu'), orderBy('position')
+  // Firestore onSnapshot listener on Firestore /menu/categories and collection(db, 'menu')
   useEffect(() => {
     let isSubscribed = true;
     let bc: BroadcastChannel | null = null;
@@ -202,7 +201,7 @@ export function MenuProvider({ children }: { children: ReactNode }) {
           if (event.data?.type === 'menu-updated' && Array.isArray(event.data?.categories)) {
             if (isSubscribed) {
               setCategories(event.data.categories);
-              console.log('[MenuContext] snapshot ->', event.data.categories.length);
+              console.log('[MenuContext] snapshot size ->', event.data.categories.length);
             }
           }
         };
@@ -216,17 +215,49 @@ export function MenuProvider({ children }: { children: ReactNode }) {
       const customEvent = e as CustomEvent<MenuCategory[]>;
       if (customEvent.detail && Array.isArray(customEvent.detail) && isSubscribed) {
         setCategories(customEvent.detail);
-        console.log('[MenuContext] snapshot ->', customEvent.detail.length);
+        console.log('[MenuContext] snapshot size ->', customEvent.detail.length);
       }
     };
     window.addEventListener(CUSTOM_EVENT_NAME, handleCustomEvent);
 
-    // 3. Setup Firestore onSnapshot listener
-    // Query is collection(db, 'menu'), orderBy('position')
-    let unsubscribeFirestore: (() => void) | null = null;
+    // 3. Setup Firestore onSnapshot listener directly on /menu/categories doc
+    let unsubscribeCatDoc: (() => void) | null = null;
+    let unsubscribeFirestoreCol: (() => void) | null = null;
+
+    try {
+      const categoriesDocRef = doc(db, 'menu', 'categories');
+      unsubscribeCatDoc = onSnapshot(
+        categoriesDocRef,
+        (docSnap) => {
+          if (!isSubscribed) return;
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data?.categories && Array.isArray(data.categories) && data.categories.length > 0) {
+              setCategories(data.categories);
+              broadcastUpdate(data.categories);
+              console.log('[MenuContext] snapshot size ->', data.categories.length);
+              return;
+            }
+          }
+        },
+        (error) => {
+          console.warn('[MenuContext] Firestore /menu/categories onSnapshot error, falling back to MENU_DATA:', error);
+          // Falls back to MENU_DATA only when offline or error
+          if (categoriesRef.current.length === 0) {
+            const fallback = getDevFallbackCategories();
+            setCategories(fallback);
+            console.log('[MenuContext] snapshot size (offline fallback) ->', fallback.length);
+          }
+        }
+      );
+    } catch (err) {
+      console.warn('[MenuContext] Failed to attach onSnapshot to /menu/categories:', err);
+    }
+
+    // Also listen to collection(db, 'menu'), orderBy('position') for individual doc updates
     try {
       const menuQuery = query(collection(db, 'menu'), orderBy('position'));
-      unsubscribeFirestore = onSnapshot(
+      unsubscribeFirestoreCol = onSnapshot(
         menuQuery,
         (snapshot) => {
           if (!isSubscribed) return;
@@ -252,7 +283,6 @@ export function MenuProvider({ children }: { children: ReactNode }) {
             }
           });
 
-          // Prefer individual category docs if populated, otherwise use aggregated categories doc
           const finalCategories = fetchedCats.length > 0 
             ? fetchedCats 
             : (aggregatedCategoriesDoc || []);
@@ -260,42 +290,39 @@ export function MenuProvider({ children }: { children: ReactNode }) {
           if (finalCategories.length > 0) {
             setCategories(finalCategories);
             broadcastUpdate(finalCategories);
-            console.log('[MenuContext] snapshot ->', finalCategories.length);
+            console.log('[MenuContext] snapshot size ->', finalCategories.length);
           } else if (snapshot.empty) {
             // Attempt auto-seed if empty
             seedFirestoreIfEmpty().then(() => {
-              if (isDev && categoriesRef.current.length === 0) {
+              if (categoriesRef.current.length === 0) {
                 const fallback = getDevFallbackCategories();
                 setCategories(fallback);
-                console.log('[MenuContext] snapshot ->', fallback.length);
+                console.log('[MenuContext] snapshot size (seed fallback) ->', fallback.length);
               }
             });
           }
         },
         (error) => {
-          console.warn('[MenuContext] Firestore onSnapshot error:', error);
-          // Fallback only in dev
-          if (isDev && categoriesRef.current.length === 0) {
+          console.warn('[MenuContext] Firestore collection onSnapshot error:', error);
+          if (categoriesRef.current.length === 0) {
             const fallback = getDevFallbackCategories();
             setCategories(fallback);
-            console.log('[MenuContext] snapshot ->', fallback.length);
+            console.log('[MenuContext] snapshot size (offline fallback) ->', fallback.length);
           }
         }
       );
     } catch (err) {
-      console.warn('[MenuContext] Failed to attach onSnapshot:', err);
-      if (isDev && categoriesRef.current.length === 0) {
-        setCategories(getDevFallbackCategories());
-      }
+      console.warn('[MenuContext] Failed to attach collection onSnapshot:', err);
     }
 
     return () => {
       isSubscribed = false;
       if (bc) bc.close();
       window.removeEventListener(CUSTOM_EVENT_NAME, handleCustomEvent);
-      if (unsubscribeFirestore) unsubscribeFirestore();
+      if (unsubscribeCatDoc) unsubscribeCatDoc();
+      if (unsubscribeFirestoreCol) unsubscribeFirestoreCol();
     };
-  }, [broadcastUpdate, isDev, seedFirestoreIfEmpty]);
+  }, [broadcastUpdate, seedFirestoreIfEmpty]);
 
   // Admin Write Operations - Direct to Firestore docs with same docId as customer menu, NO localStorage.dineview_menu writes
   const persistCategoryDoc = async (categoryId: string, updatedCat: MenuCategory, allCats: MenuCategory[]) => {

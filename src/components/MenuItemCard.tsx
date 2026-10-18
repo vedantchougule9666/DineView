@@ -53,6 +53,24 @@ export const MenuItemCard: React.FC<Props> = memo(({
           referrerPolicy="no-referrer"
         />
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+
+        {/* Veg / Spicy badge overlay */}
+        {item.tags && item.tags.length > 0 && (
+          <div className="absolute top-2.5 start-2.5 z-10 flex flex-wrap gap-1">
+            {item.tags.some(tag => tag.id === 'v' || tag.id === 'vg') && (
+              <span className="bg-emerald-950/80 backdrop-blur-xs text-emerald-300 border border-emerald-500/40 text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-xs flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                Veg
+              </span>
+            )}
+            {item.tags.some(tag => tag.id === 'spicy') && (
+              <span className="bg-red-950/80 backdrop-blur-xs text-red-300 border border-red-500/40 text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-xs flex items-center gap-1">
+                <Flame className="w-2.5 h-2.5 fill-red-400" />
+                Spicy
+              </span>
+            )}
+          </div>
+        )}
       </div>
       
       <div className="flex justify-between items-start gap-4">
@@ -64,8 +82,22 @@ export const MenuItemCard: React.FC<Props> = memo(({
         </h3>
         <span className="text-lg md:text-xl font-serif text-text-primary/90 shrink-0">{formatCurrency(item.price)}</span>
       </div>
+
+      {/* Dietary Tags Chips */}
+      {item.tags && item.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {item.tags.map((tag) => (
+            <span
+              key={tag.id}
+              className={`inline-flex items-center px-2 py-0.5 rounded-xs text-[10px] font-bold uppercase tracking-wider border ${tag.color || 'bg-neutral-100 text-neutral-700 border-neutral-200'}`}
+            >
+              {t[`tag_${tag.id}`] || tag.label}
+            </span>
+          ))}
+        </div>
+      )}
       
-      <p className="text-sm md:text-base text-text-secondary mt-3 leading-relaxed line-clamp-2">
+      <p className="text-sm md:text-base text-text-secondary mt-2.5 leading-relaxed line-clamp-2">
         {displayDescription}
       </p>
       

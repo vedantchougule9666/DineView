@@ -44,7 +44,23 @@ export default function CustomerLayout() {
     };
   }, []);
 
-  const isMenuRoute = location.pathname === '/' || location.pathname === '/menu';
+  const pathname = location.pathname;
+
+  // Explicitly bypass gate for /admin/* and /manager/* paths
+  const isAdminOrManagerPath = pathname.startsWith('/admin') || pathname.startsWith('/manager');
+
+  // Customer routes guarded: / , /menu , /item/:id , /cart , /order/:id
+  const isCustomerProtectedPath = 
+    !isAdminOrManagerPath && (
+      pathname === '/' || 
+      pathname === '/menu' || 
+      pathname.startsWith('/item/') || 
+      pathname === '/cart' || 
+      pathname.startsWith('/order/')
+    );
+
+  // Auto-skip gate if phone already saved in localStorage
+  const shouldShowGate = !hasPhone && isCustomerProtectedPath;
 
   const handleNavClick = (sectionId: string, e?: React.MouseEvent) => {
     e?.preventDefault();
@@ -111,15 +127,19 @@ export default function CustomerLayout() {
 
       {/* Main Content Area - Guard MenuPage behind phone gate */}
       <div className="flex-1">
-        {!hasPhone && isMenuRoute ? (
+        {shouldShowGate ? (
           <div className="min-h-[70vh] flex flex-col items-center justify-center p-8 text-center animate-in fade-in">
             <div className="w-12 h-12 rounded-full bg-accent/10 border border-accent/20 flex items-center justify-center text-accent mb-4 animate-pulse">
               <Sparkles className="w-6 h-6" />
             </div>
-            <h2 className="font-serif text-2xl md:text-3xl text-text-primary mb-2">Exclusive Digital Menu</h2>
-            <p className="max-w-md text-sm text-text-secondary leading-relaxed">
+            <h2 className="font-serif text-2xl md:text-3xl text-text-primary mb-2">Welcome to DineView</h2>
+            <p className="max-w-md text-sm text-text-secondary leading-relaxed mb-6">
               Please enter your mobile phone number in the gate prompt to unlock our chef's live digital menu and AI Concierge.
             </p>
+            <div className="inline-flex items-center gap-2.5 px-4 py-2 rounded-full bg-accent/10 border border-accent/20 text-xs font-semibold text-accent">
+              <span className="w-2 h-2 rounded-full bg-accent animate-ping" />
+              <span>Awaiting phone verification...</span>
+            </div>
           </div>
         ) : (
           <Outlet context={{ lang, t, isRTL, tKey }} />
@@ -132,15 +152,18 @@ export default function CustomerLayout() {
       {/* AI Food Recommendation Assistant */}
       <FoodAssistantModal />
 
-      {/* Mandatory Phone Gate Modal - Blocks menu until phone is verified */}
-      <PhoneGateModal
-        isOpen={!hasPhone}
-        tableId={activeTableId}
-        tableName={activeTableName}
-        onSuccess={() => {
-          setHasPhone(true);
-        }}
-      />
+      {/* Mandatory Phone Gate Modal - Only for guarded customer routes; preserves URL and ?table */}
+      {shouldShowGate && (
+        <PhoneGateModal
+          isOpen={shouldShowGate}
+          tableId={activeTableId}
+          tableName={activeTableName}
+          onSuccess={() => {
+            setHasPhone(true);
+            // Preserves current route and URL search params (?table=...)
+          }}
+        />
+      )}
     </div>
   );
 }
