@@ -64,6 +64,9 @@
     "/tables/{tableId}": {
       "schema": "Table",
       "description": "Collection of dining tables and QR targets"
+    },
+    "/menu/{docId}": {
+      "description": "Collection of live synced restaurant menu categories and dishes"
     }
   }
 }

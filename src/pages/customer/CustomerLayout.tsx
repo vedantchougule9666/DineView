@@ -1,19 +1,50 @@
-import React from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
-import { ShoppingBag } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useCart } from '../../context/CartContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useTable } from '../../context/TableContext';
 import { LanguageSelector } from '../../components/LanguageSelector';
 import { Footer } from '../../components/Footer';
 import { FoodAssistantModal } from '../../components/FoodAssistantModal';
+import { CartButton } from '../../components/CartButton';
+import { PhoneGateModal } from '../../components/PhoneGateModal';
+import { Sparkles } from 'lucide-react';
 import { clearMenuScrollPosition } from '../../utils/scrollRestoration';
 
 export default function CustomerLayout() {
   const { lang, t, isRTL, tKey } = useLanguage();
   const navigate = useNavigate();
+  const location = useLocation();
   const { itemCount } = useCart();
-  const { activeTableId } = useTable();
+  const { activeTableId, activeTableName } = useTable();
+
+  // Mandatory phone entry gate state
+  const [hasPhone, setHasPhone] = useState<boolean>(() => {
+    try {
+      return Boolean(localStorage.getItem('dineview_phone'));
+    } catch {
+      return false;
+    }
+  });
+
+  // Listen to phone updates across tabs and within app
+  useEffect(() => {
+    const handlePhoneUpdated = () => {
+      try {
+        if (localStorage.getItem('dineview_phone')) {
+          setHasPhone(true);
+        }
+      } catch {}
+    };
+    window.addEventListener('dineview:phone_updated', handlePhoneUpdated);
+    window.addEventListener('storage', handlePhoneUpdated);
+    return () => {
+      window.removeEventListener('dineview:phone_updated', handlePhoneUpdated);
+      window.removeEventListener('storage', handlePhoneUpdated);
+    };
+  }, []);
+
+  const isMenuRoute = location.pathname === '/' || location.pathname === '/menu';
 
   const handleNavClick = (sectionId: string, e?: React.MouseEvent) => {
     e?.preventDefault();
@@ -74,24 +105,25 @@ export default function CustomerLayout() {
             <span>{activeTableId && activeTableId !== 'COUNTER' ? `Table ${activeTableId}` : 'Counter'}</span>
           </div>
           
-          <button 
-            onClick={() => navigate('/cart')}
-            className="relative flex items-center justify-center p-2 text-text-secondary hover:text-text-primary transition-colors"
-            aria-label={t.nav_cart || 'Cart'}
-          >
-            <ShoppingBag className="w-5 h-5" />
-            {itemCount > 0 && (
-              <span className="absolute top-0 end-0 w-4 h-4 bg-accent text-white text-[9px] font-bold flex items-center justify-center rounded-full">
-                {itemCount}
-              </span>
-            )}
-          </button>
+          <CartButton variant="header" t={t} />
         </div>
       </nav>
 
-      {/* Main Content Area */}
+      {/* Main Content Area - Guard MenuPage behind phone gate */}
       <div className="flex-1">
-        <Outlet context={{ lang, t, isRTL, tKey }} />
+        {!hasPhone && isMenuRoute ? (
+          <div className="min-h-[70vh] flex flex-col items-center justify-center p-8 text-center animate-in fade-in">
+            <div className="w-12 h-12 rounded-full bg-accent/10 border border-accent/20 flex items-center justify-center text-accent mb-4 animate-pulse">
+              <Sparkles className="w-6 h-6" />
+            </div>
+            <h2 className="font-serif text-2xl md:text-3xl text-text-primary mb-2">Exclusive Digital Menu</h2>
+            <p className="max-w-md text-sm text-text-secondary leading-relaxed">
+              Please enter your mobile phone number in the gate prompt to unlock our chef's live digital menu and AI Concierge.
+            </p>
+          </div>
+        ) : (
+          <Outlet context={{ lang, t, isRTL, tKey }} />
+        )}
       </div>
 
       {/* Footer */}
@@ -99,6 +131,16 @@ export default function CustomerLayout() {
 
       {/* AI Food Recommendation Assistant */}
       <FoodAssistantModal />
+
+      {/* Mandatory Phone Gate Modal - Blocks menu until phone is verified */}
+      <PhoneGateModal
+        isOpen={!hasPhone}
+        tableId={activeTableId}
+        tableName={activeTableName}
+        onSuccess={() => {
+          setHasPhone(true);
+        }}
+      />
     </div>
   );
 }

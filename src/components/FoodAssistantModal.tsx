@@ -94,9 +94,9 @@ export const FoodAssistantModal: React.FC = () => {
   const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
 
   useEffect(() => {
-    if (isOpen) {
+    const fetchAndSetProfile = (phoneStr?: string) => {
       try {
-        const phone = localStorage.getItem('dineview_phone');
+        const phone = phoneStr || localStorage.getItem('dineview_phone');
         if (phone) {
           getCustomerProfile(phone).then((prof) => {
             if (prof) {
@@ -131,11 +131,43 @@ export const FoodAssistantModal: React.FC = () => {
                   return prev;
                 });
               }
+            } else {
+              // Newly registered guest
+              setCustomerProfile({
+                phone,
+                totalOrders: 0,
+                totalSpent: 0,
+                recentDishes: [],
+                frequentDishes: [],
+                lastVisit: new Date().toISOString(),
+                dietaryPreferences: [],
+                spicePreference: 'medium',
+              });
             }
           });
         }
       } catch {}
+    };
+
+    if (isOpen) {
+      fetchAndSetProfile();
     }
+
+    const handlePhoneUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<{ phone: string; profile?: CustomerProfile }>;
+      if (customEvent.detail?.profile) {
+        setCustomerProfile(customEvent.detail.profile);
+      } else if (customEvent.detail?.phone) {
+        fetchAndSetProfile(customEvent.detail.phone);
+      } else {
+        fetchAndSetProfile();
+      }
+    };
+
+    window.addEventListener('dineview:phone_updated', handlePhoneUpdated);
+    return () => {
+      window.removeEventListener('dineview:phone_updated', handlePhoneUpdated);
+    };
   }, [isOpen]);
 
   useEffect(() => {
@@ -585,7 +617,11 @@ export const FoodAssistantModal: React.FC = () => {
                 {customerProfile && (
                   <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-accent/10 border border-accent/25 text-[10px] font-bold text-accent">
                     <UtensilsCrossed className="w-3 h-3" />
-                    <span>Welcome back ({maskPhone(customerProfile.phone)}) • {customerProfile.totalOrders} {customerProfile.totalOrders === 1 ? 'visit' : 'visits'}</span>
+                    <span>
+                      {customerProfile.totalOrders && customerProfile.totalOrders > 0
+                        ? `Welcome back (${maskPhone(customerProfile.phone)}) • ${customerProfile.totalOrders} ${customerProfile.totalOrders === 1 ? 'visit' : 'visits'}`
+                        : `Welcome back (${maskPhone(customerProfile.phone)})`}
+                    </span>
                   </div>
                 )}
               </div>

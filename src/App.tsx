@@ -12,6 +12,7 @@ import CustomerLayout from './pages/customer/CustomerLayout';
 import HomePage from './pages/customer/HomePage';
 
 // Lazy-load other customer pages
+const MenuPage = React.lazy(() => import('./pages/customer/MenuPage'));
 const ItemDetailsPage = React.lazy(() => import('./pages/customer/ItemDetailsPage'));
 const CartPage = React.lazy(() => import('./pages/customer/CartPage'));
 const OrderStatusPage = React.lazy(() => import('./pages/customer/OrderStatusPage'));
@@ -22,6 +23,7 @@ const AdminLayout = React.lazy(() => import('./pages/admin/AdminLayout'));
 const AdminLogin = React.lazy(() => import('./pages/admin/AdminLogin'));
 const AdminDashboard = React.lazy(() => import('./pages/admin/AdminDashboard'));
 const MenuManager = React.lazy(() => import('./pages/admin/MenuManager'));
+const MenuEditor = React.lazy(() => import('./pages/admin/MenuEditor'));
 const OrderManager = React.lazy(() => import('./pages/admin/OrderManager'));
 const TableManager = React.lazy(() => import('./pages/admin/TableManager'));
 
@@ -55,7 +57,7 @@ export default function App() {
                       {/* Customer Routes */}
                       <Route path="/" element={<CustomerLayout />}>
                         <Route index element={<HomePage />} />
-                        <Route path="menu" element={<HomePage />} />
+                        <Route path="menu" element={<MenuPage />} />
                         <Route path="gallery" element={<Navigate to="/" replace />} />
                         <Route path="locations" element={<HomePage />} />
                         <Route path="item/:id" element={<ItemDetailsPage />} />
@@ -68,7 +70,8 @@ export default function App() {
                       <Route path="/admin" element={<AdminLayout />}>
                         <Route path="login" element={<AdminLogin />} />
                         <Route index element={<AdminDashboard />} />
-                        <Route path="menu" element={<MenuManager />} />
+                        <Route path="menu" element={<MenuEditor />} />
+                        <Route path="menu-editor" element={<MenuEditor />} />
                         <Route path="orders" element={<OrderManager />} />
                         <Route path="tables" element={<TableManager />} />
                       </Route>

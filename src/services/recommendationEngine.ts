@@ -238,19 +238,45 @@ export function getFoodRecommendations(
     const arDishes = allItems.filter(i => Boolean(i.item.modelUrl));
     return {
       type: 'recommendations',
-      intro: "DineView currently features an interactive 3D and native Augmented Reality (AR) table preview for our signature dish:",
-      recommendations: arDishes.map(d => ({
-        dish: d.item,
-        categoryName: d.categoryName,
-        reason: "Our flagship Wagyu burger can be placed directly on your physical dining table in true-to-scale AR.",
-        whyBullets: [
+      intro: `DineView currently features interactive 3D and native Augmented Reality (AR) table preview for ${arDishes.length} signature dishes:`,
+      recommendations: arDishes.map(d => {
+        let reason = `Experience ${d.item.name} placed directly on your physical dining table in true-to-scale AR.`;
+        let whyBullets = [
           "Interactive 3D model available directly on the dish details page",
           "One-tap 'VIEW IN AR' launches native camera placement",
-          "Authored to realistic physical dimensions (14.4cm × 12.0cm)"
-        ]
-      })),
+          "Lightweight optimized AR model (<1.5MB) for instant plane tracking"
+        ];
+        if (d.item.id === 's4') {
+          reason = "Our signature Truffle Wagyu Burger can be placed directly on your physical dining table in true-to-scale AR.";
+          whyBullets = [
+            "Interactive 3D model available directly on the dish details page",
+            "One-tap 'VIEW IN AR' launches native camera placement",
+            "Authored to realistic physical dimensions (14.4cm × 12.0cm)"
+          ];
+        } else if (d.item.id === 'm5') {
+          reason = "Inspect our Wood-Fired Margherita Pizza with charred crust and fresh buffalo mozzarella in true-to-scale AR.";
+          whyBullets = [
+            "Life-sized 12-inch pizza projection directly onto your table",
+            "Ultra-fast AR loading with Draco compression",
+            "Fixed scale prevents sliding or rescale jitter"
+          ];
+        } else if (d.item.id === 'm4') {
+          reason = "Preview our Roasted Chicken dish in full 3D and AR before ordering.";
+          whyBullets = [
+            "Realistic high-detail textures and lighting preview",
+            "Tap 'VIEW IN AR' for instant WebXR / Scene Viewer / Quick Look placement",
+            "Optimized lightweight geometry for rock-solid plane tracking"
+          ];
+        }
+        return {
+          dish: d.item,
+          categoryName: d.categoryName,
+          reason,
+          whyBullets
+        };
+      }),
       followUpSuggestion: "Tap 'VIEW DISH' to see the 3D model and launch 'VIEW IN AR'.",
-      suggestedChips: ['View Burger in AR', 'What is Burger?', 'Recommend something spicy'],
+      suggestedChips: ['View Burger in AR', 'View Pizza in AR', 'View Chicken in AR'],
       conversationContext: { ...context, lastMentionedDishId: 's4' }
     };
   }
@@ -675,7 +701,7 @@ export function getFoodRecommendations(
     const vegCount = allItems.filter(i => i.item.tags?.some(t => t.id === 'v' || t.id === 'vg')).length;
     return {
       type: 'clarification',
-      intro: `DineView offers exactly ${vegCount} verified vegetarian dishes across our starters, mains, sides, desserts, and drinks.`,
+      intro: `DineView offers exactly ${vegCount} verified vegetarian dishes across our starters, mains, slides, desserts, and drinks.`,
       recommendations: allItems.filter(i => i.item.tags?.some(t => t.id === 'v')).slice(0, 3).map(v => ({
         dish: v.item,
         categoryName: v.categoryName,

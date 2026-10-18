@@ -21,7 +21,7 @@ export const en: Translations = {
   // Categories
   starters: 'Starters',
   'main-courses': 'Main Courses',
-  sides: 'Sides',
+  sides: 'Slides',
   desserts: 'Desserts',
   drinks: 'Drinks',
 

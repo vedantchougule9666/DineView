@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CategoryNav } from '../../components/CategoryNav';
 import { MenuSection } from '../../components/MenuSection';
+import { CartButton } from '../../components/CartButton';
 import { MapPin, Clock } from 'lucide-react';
 import { useLocation, useOutletContext } from 'react-router-dom';
 import { useMenu } from '../../context/MenuContext';
@@ -185,6 +186,9 @@ export default function HomePage() {
           )}
         </div>
       </section>
+
+      {/* Floating Cart Button */}
+      <CartButton t={t} />
     </>
   );
 }

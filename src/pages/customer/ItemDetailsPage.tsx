@@ -69,6 +69,8 @@ export default function ItemDetailsPage() {
           {actualModelUrl && (
             <ModelViewerModal
               modelUrl={actualModelUrl}
+              modelUrlAr={item.modelUrlAr || (isBurger ? '/models/burger-optimized.glb' : undefined)}
+              poster={item.image}
               itemName={displayName}
               buttonClassName="mt-6 w-full flex items-center justify-center gap-2 border border-border text-text-primary px-8 py-4 rounded-full text-[10px] font-bold uppercase tracking-widest hover:border-text-secondary transition-colors"
               iconClassName="w-4 h-4"

@@ -24,6 +24,16 @@ export default function CartPage() {
   const navigate = useNavigate();
   const { lang, t } = useOutletContext<{ lang: string; t: Record<string, string>; isRTL?: boolean }>();
 
+  // Guard scrollTo(0,0) to 'only on first load' so opening /cart lands at top, not bottom,
+  // without triggering re-scrolls when adjusting item quantities or typing.
+  const hasScrolledOnMountRef = React.useRef(false);
+  useEffect(() => {
+    if (!hasScrolledOnMountRef.current) {
+      hasScrolledOnMountRef.current = true;
+      window.scrollTo(0, 0);
+    }
+  }, []);
+
   // Optional Phone state for AI memory & customer profile
   const [selectedCountryCode, setSelectedCountryCode] = useState('+91');
   const [phoneNumber, setPhoneNumber] = useState('');

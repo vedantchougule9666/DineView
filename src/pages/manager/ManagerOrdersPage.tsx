@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useOrder, Order, OrderStatus } from '../../context/OrderContext';
 import { CartItem } from '../../context/CartContext';
 import { 
@@ -17,16 +17,46 @@ import {
   ShieldCheck, 
   Save, 
   Calendar, 
+  CalendarRange,
   FileText,
-  UserCheck
+  UserCheck,
+  ArrowUpDown,
+  Receipt,
+  TrendingUp,
+  Filter
 } from 'lucide-react';
 import { formatCurrency } from '../../utils/currency';
 import { maskPhone, updateCustomerSpendDelta } from '../../services/customerService';
+import { 
+  DateFilterState, 
+  DateFilterType, 
+  SortOptionType, 
+  filterOrdersByDate, 
+  sortOrders, 
+  getOrderCountsPerDay 
+} from '../../utils/orderFilters';
+
+const DATE_PRESETS: { id: DateFilterType; label: string }[] = [
+  { id: 'today', label: 'Today' },
+  { id: '7days', label: 'Last 7 days' },
+  { id: '30days', label: 'Last 30 days' },
+  { id: 'custom', label: 'Custom range' },
+  { id: 'all', label: 'All Time' },
+];
 
 export default function ManagerOrdersPage() {
   const { orders, confirmOrder, updateOrderStatus, updateOrderItems } = useOrder();
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  
+  // Date and Sort filter states
+  const [dateFilter, setDateFilter] = useState<DateFilterState>({
+    type: 'today',
+    startDate: new Date().toISOString().split('T')[0],
+    endDate: new Date().toISOString().split('T')[0],
+  });
+  const [sortBy, setSortBy] = useState<SortOptionType>('newest');
+
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [editItems, setEditItems] = useState<CartItem[]>([]);
   const [editNotes, setEditNotes] = useState<string>('');
@@ -37,24 +67,77 @@ export default function ManagerOrdersPage() {
     ? sessionStorage.getItem('dineview_manager_name') || 'Kitchen Supervisor'
     : 'Kitchen Supervisor';
 
-  const pendingOrders = orders.filter((o) => o.status === 'pending');
-  const preparingOrders = orders.filter((o) => o.status === 'preparing');
-  const readyOrders = orders.filter((o) => o.status === 'ready');
-  const completedOrders = orders.filter((o) => o.status === 'completed');
+  const handleDatePresetClick = (preset: DateFilterType) => {
+    if (preset === 'today') {
+      const todayStr = new Date().toISOString().split('T')[0];
+      setDateFilter({ type: 'today', startDate: todayStr, endDate: todayStr });
+    } else if (preset === '7days') {
+      const now = new Date();
+      const past7 = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+      setDateFilter({
+        type: '7days',
+        startDate: past7.toISOString().split('T')[0],
+        endDate: now.toISOString().split('T')[0],
+      });
+    } else if (preset === '30days') {
+      const now = new Date();
+      const past30 = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
+      setDateFilter({
+        type: '30days',
+        startDate: past30.toISOString().split('T')[0],
+        endDate: now.toISOString().split('T')[0],
+      });
+    } else if (preset === 'custom') {
+      setDateFilter(prev => ({
+        type: 'custom',
+        startDate: prev.startDate || new Date().toISOString().split('T')[0],
+        endDate: prev.endDate || new Date().toISOString().split('T')[0],
+      }));
+    } else {
+      setDateFilter({ type: 'all' });
+    }
+  };
 
-  const filteredOrders = orders.filter((order) => {
-    const matchesStatus = selectedStatus === 'all' || order.status === selectedStatus;
-    const q = searchQuery.trim().toLowerCase();
-    const matchesSearch =
-      !q ||
-      order.id.toLowerCase().includes(q) ||
-      (order.tableId && order.tableId.toLowerCase().includes(q)) ||
-      (order.tableName && order.tableName.toLowerCase().includes(q)) ||
-      (order.customerPhone && order.customerPhone.toLowerCase().includes(q)) ||
-      order.items.some((i) => i.name.toLowerCase().includes(q));
+  // 1. Filter by Status & Search Query
+  const baseFiltered = useMemo(() => {
+    return orders.filter((order) => {
+      const matchesStatus = selectedStatus === 'all' || order.status === selectedStatus;
+      const q = searchQuery.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        order.id.toLowerCase().includes(q) ||
+        (order.tableId && order.tableId.toLowerCase().includes(q)) ||
+        (order.tableName && order.tableName.toLowerCase().includes(q)) ||
+        (order.customerPhone && order.customerPhone.toLowerCase().includes(q)) ||
+        order.items.some((i) => i.name.toLowerCase().includes(q));
 
-    return matchesStatus && matchesSearch;
-  });
+      return matchesStatus && matchesSearch;
+    });
+  }, [orders, selectedStatus, searchQuery]);
+
+  // 2. Filter by Date (applied to orders by createdAt)
+  const dateFiltered = useMemo(() => {
+    return filterOrdersByDate(baseFiltered, dateFilter);
+  }, [baseFiltered, dateFilter]);
+
+  // 3. Sort orders
+  const filteredOrders = useMemo(() => {
+    return sortOrders(dateFiltered, sortBy);
+  }, [dateFiltered, sortBy]);
+
+  // 4. Counts per day
+  const countsPerDay = useMemo(() => {
+    return getOrderCountsPerDay(filteredOrders);
+  }, [filteredOrders]);
+
+  const totalFilteredSales = useMemo(() => {
+    return filteredOrders.reduce((sum, o) => sum + o.total, 0);
+  }, [filteredOrders]);
+
+  const pendingOrders = filteredOrders.filter((o) => o.status === 'pending');
+  const preparingOrders = filteredOrders.filter((o) => o.status === 'preparing');
+  const readyOrders = filteredOrders.filter((o) => o.status === 'ready');
+  const completedOrders = filteredOrders.filter((o) => o.status === 'completed');
 
   const handleOpenEdit = (order: Order) => {
     setEditingOrder(order);
@@ -216,12 +299,89 @@ export default function ManagerOrdersPage() {
         </div>
       </div>
 
-      {/* Filters and Search Bar */}
-      <div className="bg-white border border-border rounded-sm p-4 mb-6 shadow-xs flex flex-col md:flex-row gap-4 items-center justify-between">
+      {/* Date Filter & Sort Bar */}
+      <div className="bg-white border border-border rounded-sm p-4 mb-4 shadow-xs">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          {/* Date Presets */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-text-secondary flex items-center gap-1.5 me-2">
+              <Calendar className="w-4 h-4 text-accent" />
+              <span>Date Filter:</span>
+            </span>
+
+            {DATE_PRESETS.map((preset) => {
+              const isActive = dateFilter.type === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => handleDatePresetClick(preset.id)}
+                  className={`px-3.5 py-1.5 rounded-sm text-xs font-bold uppercase tracking-wider transition-all ${
+                    isActive
+                      ? 'bg-text-primary text-white shadow-xs'
+                      : 'bg-bg-primary text-text-secondary hover:text-text-primary hover:bg-neutral-200/70 border border-border/60'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Custom Date Range Pickers (shown when custom is selected) */}
+            {dateFilter.type === 'custom' && (
+              <div className="flex items-center gap-2 bg-bg-primary p-2 rounded-sm border border-border text-xs animate-in fade-in duration-150">
+                <CalendarRange className="w-4 h-4 text-text-muted shrink-0" />
+                <input
+                  type="date"
+                  value={dateFilter.startDate || ''}
+                  onChange={(e) =>
+                    setDateFilter(prev => ({ ...prev, startDate: e.target.value }))
+                  }
+                  className="bg-white border border-border px-2.5 py-1 rounded-sm text-xs text-text-primary outline-none focus:border-text-secondary"
+                  aria-label="Start Date"
+                />
+                <span className="text-text-muted font-bold">—</span>
+                <input
+                  type="date"
+                  value={dateFilter.endDate || ''}
+                  onChange={(e) =>
+                    setDateFilter(prev => ({ ...prev, endDate: e.target.value }))
+                  }
+                  className="bg-white border border-border px-2.5 py-1 rounded-sm text-xs text-text-primary outline-none focus:border-text-secondary"
+                  aria-label="End Date"
+                />
+              </div>
+            )}
+
+            {/* Sort Dropdown: Newest first / Oldest first / Total High-Low */}
+            <div className="flex items-center gap-2 bg-bg-primary border border-border px-3 py-1.5 rounded-sm shadow-2xs">
+              <ArrowUpDown className="w-4 h-4 text-text-muted" />
+              <label htmlFor="sort-dropdown-mgr" className="text-xs font-bold uppercase tracking-wider text-text-secondary whitespace-nowrap">
+                Sort:
+              </label>
+              <select
+                id="sort-dropdown-mgr"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortOptionType)}
+                className="bg-transparent text-xs font-medium text-text-primary outline-none cursor-pointer"
+              >
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="total-high-low">Total High-Low</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Status Filters and Search Bar */}
+      <div className="bg-white border border-border rounded-sm p-4 mb-4 shadow-xs flex flex-col md:flex-row gap-4 items-center justify-between">
         {/* Status Tab Buttons */}
         <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto">
           {[
-            { id: 'all', label: `All (${orders.length})` },
+            { id: 'all', label: `All (${filteredOrders.length})` },
             { id: 'pending', label: `Pending (${pendingOrders.length})` },
             { id: 'preparing', label: `Preparing (${preparingOrders.length})` },
             { id: 'ready', label: `Ready (${readyOrders.length})` },
@@ -251,6 +411,99 @@ export default function ManagerOrdersPage() {
             className="w-full text-xs px-3 py-2 ps-9 border border-border rounded-sm bg-bg-primary text-text-primary focus:outline-none focus:border-text-primary"
           />
           <Search className="w-4 h-4 text-text-muted absolute left-2.5 top-1/2 -translate-y-1/2" />
+        </div>
+      </div>
+
+      {/* Active Filter Chips & Counts Per Day Bar */}
+      <div className="bg-white border border-border rounded-sm p-4 mb-6 shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs border-b border-border/60 pb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">
+              Active Filters:
+            </span>
+
+            {/* Date Chip */}
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-accent/10 text-accent border border-accent/20">
+              <Calendar className="w-3.5 h-3.5" />
+              <span>
+                {dateFilter.type === 'today' && 'Today'}
+                {dateFilter.type === '7days' && 'Last 7 days'}
+                {dateFilter.type === '30days' && 'Last 30 days'}
+                {dateFilter.type === 'custom' && `${dateFilter.startDate || 'Start'} to ${dateFilter.endDate || 'End'}`}
+                {dateFilter.type === 'all' && 'All Time'}
+              </span>
+            </span>
+
+            {/* Status Chip */}
+            {selectedStatus !== 'all' && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 capitalize">
+                <Filter className="w-3.5 h-3.5" />
+                <span>Status: {selectedStatus}</span>
+              </span>
+            )}
+
+            {/* Sort Chip */}
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-neutral-100 text-neutral-700 border border-border">
+              <ArrowUpDown className="w-3.5 h-3.5" />
+              <span>
+                {sortBy === 'newest' && 'Newest first'}
+                {sortBy === 'oldest' && 'Oldest first'}
+                {sortBy === 'total-high-low' && 'Total High-Low'}
+              </span>
+            </span>
+
+            {/* Total Results */}
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-text-primary text-white">
+              <Receipt className="w-3.5 h-3.5" />
+              <span>{filteredOrders.length} {filteredOrders.length === 1 ? 'Ticket' : 'Tickets'}</span>
+            </span>
+
+            {/* Volume */}
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+              <span>{formatCurrency(totalFilteredSales)}</span>
+            </span>
+          </div>
+
+          {(dateFilter.type !== 'today' || selectedStatus !== 'all' || sortBy !== 'newest' || searchQuery) && (
+            <button
+              type="button"
+              onClick={() => {
+                handleDatePresetClick('today');
+                setSelectedStatus('all');
+                setSortBy('newest');
+                setSearchQuery('');
+              }}
+              className="text-[10px] font-bold uppercase tracking-wider text-accent hover:underline cursor-pointer"
+            >
+              Reset Filters
+            </button>
+          )}
+        </div>
+
+        {/* Counts Per Day Chips */}
+        <div>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted block mb-2">
+            Counts Per Day:
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {Object.keys(countsPerDay).length === 0 ? (
+              <span className="text-xs text-text-muted italic">No orders found for the selected date range</span>
+            ) : (
+              Object.entries(countsPerDay).map(([dateStr, count]) => (
+                <span
+                  key={dateStr}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-sm text-xs font-medium bg-bg-primary text-text-primary border border-border shadow-2xs"
+                >
+                  <Calendar className="w-3.5 h-3.5 text-accent" />
+                  <span className="font-semibold">{dateStr}:</span>
+                  <span className="px-2 py-0.5 rounded-full bg-text-primary text-white text-[10px] font-bold">
+                    {count} {count === 1 ? 'order' : 'orders'}
+                  </span>
+                </span>
+              ))
+            )}
+          </div>
         </div>
       </div>
 

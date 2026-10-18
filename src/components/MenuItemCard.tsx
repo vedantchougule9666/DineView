@@ -83,6 +83,8 @@ export const MenuItemCard: React.FC<Props> = memo(({
           {actualModelUrl && (
             <ModelViewerModal 
               modelUrl={actualModelUrl} 
+              modelUrlAr={item.modelUrlAr || (isBurger ? '/models/burger-optimized.glb' : undefined)}
+              poster={item.image}
               itemName={displayName} 
             />
           )}
@@ -129,8 +131,20 @@ export const MenuItemCard: React.FC<Props> = memo(({
     </div>
   );
 }, (prevProps, nextProps) => {
-  return prevProps.item.id === nextProps.item.id && 
+  const p = prevProps.item;
+  const n = nextProps.item;
+  return p.id === n.id && 
+         p.name === n.name && 
+         p.price === n.price && 
+         p.description === n.description && 
+         p.image === n.image && 
+         p.calories === n.calories && 
+         p.available === n.available && 
+         p.maxPerOrder === n.maxPerOrder && 
+         p.modelUrl === n.modelUrl && 
+         p.modelUrlAr === n.modelUrlAr && 
          prevProps.cartQuantity === nextProps.cartQuantity && 
+         prevProps.cartItemId === nextProps.cartItemId && 
          prevProps.lang === nextProps.lang && 
          prevProps.t === nextProps.t;
 });

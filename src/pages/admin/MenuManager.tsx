@@ -6,7 +6,18 @@ import { Edit2, Trash2, Plus, X, Eye, EyeOff, FolderOpen } from 'lucide-react';
 import { formatCurrency } from '../../utils/currency';
 
 export default function MenuManager() {
-  const { categories, addMenuItem, updateMenuItem, deleteMenuItem, toggleItemAvailability, addCategory, updateCategory, deleteCategory } = useMenu();
+  const { 
+    categories, 
+    addMenuItem, 
+    updateMenuItem, 
+    deleteMenuItem, 
+    toggleItemAvailability, 
+    addCategory, 
+    updateCategory, 
+    deleteCategory,
+    invalidateCache,
+    refreshMenu
+  } = useMenu();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCatModalOpen, setIsCatModalOpen] = useState(false);
   
@@ -35,9 +46,21 @@ export default function MenuManager() {
 
   const [catName, setCatName] = useState('');
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
+
+  const getCategoryDisplayName = (name: string, id?: string): string => {
+    if (id === 'sides' || name.toLowerCase() === 'sides' || name.toLowerCase() === 'slides') {
+      return 'Slides';
+    }
+    return name;
+  };
 
   const allItems = categories.flatMap(cat => 
     cat.items.map(item => ({ ...item, categoryId: cat.id, categoryName: cat.name }))
+  );
+
+  const filteredItems = allItems.filter(item => 
+    selectedCategoryFilter === 'all' || item.categoryId === selectedCategoryFilter
   );
 
   const openAddModal = () => {
@@ -75,7 +98,7 @@ export default function MenuManager() {
     setEditingItem(null);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     
     const itemPayload: MenuItem = {
@@ -92,15 +115,18 @@ export default function MenuManager() {
     if (editingItem) {
       if (editingItem.categoryId !== formData.categoryId) {
         // Category changed, delete from old, add to new
-        deleteMenuItem(editingItem.categoryId, editingItem.item.id);
-        addMenuItem(formData.categoryId, itemPayload);
+        await deleteMenuItem(editingItem.categoryId, editingItem.item.id);
+        await addMenuItem(formData.categoryId, itemPayload);
       } else {
-        updateMenuItem(formData.categoryId, itemPayload.id, itemPayload);
+        await updateMenuItem(formData.categoryId, itemPayload.id, itemPayload);
       }
     } else {
-      addMenuItem(formData.categoryId, itemPayload);
+      await addMenuItem(formData.categoryId, itemPayload);
     }
     
+    // Invalidate cache and trigger MenuContext refresh
+    invalidateCache();
+    await refreshMenu();
     closeModal();
   };
 
@@ -111,31 +137,69 @@ export default function MenuManager() {
     setCatName('');
   };
 
-  const handleSaveCat = (e: React.FormEvent) => {
+  const handleSaveCat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingCatId) {
-      updateCategory(editingCatId, catName);
+      await updateCategory(editingCatId, catName);
     } else {
-      addCategory({ id: Math.random().toString(36).substr(2, 9), name: catName, items: [] });
+      await addCategory({ id: Math.random().toString(36).substr(2, 9), name: catName, items: [] });
     }
+    invalidateCache();
+    await refreshMenu();
     closeCatModal();
+  };
+
+  const handleDeleteItem = async (categoryId: string, itemId: string) => {
+    await deleteMenuItem(categoryId, itemId);
+    invalidateCache();
+    await refreshMenu();
+  };
+
+  const handleToggleItemAvailability = async (categoryId: string, itemId: string) => {
+    await toggleItemAvailability(categoryId, itemId);
+    invalidateCache();
+    await refreshMenu();
+  };
+
+  const handleDeleteCategory = async (categoryId: string) => {
+    await deleteCategory(categoryId);
+    invalidateCache();
+    await refreshMenu();
   };
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-serif text-text-primary">Menu Management</h1>
-        <div className="flex gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+        <div>
+          <h1 className="text-3xl font-serif text-text-primary">Menu Management</h1>
+          <p className="text-xs text-text-secondary mt-1">Manage dishes, pricing, availability, and categories</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Category Filter */}
+          <select
+            value={selectedCategoryFilter}
+            onChange={e => setSelectedCategoryFilter(e.target.value)}
+            className="border border-border text-text-primary px-3 py-2 rounded-sm text-xs font-medium bg-white outline-none focus:border-text-secondary cursor-pointer capitalize"
+            aria-label="Filter by category"
+          >
+            <option value="all">All Categories</option>
+            {categories.map(cat => (
+              <option key={cat.id} value={cat.id}>
+                {getCategoryDisplayName(cat.name, cat.id)}
+              </option>
+            ))}
+          </select>
+
           <button 
             onClick={openCatModal}
-            className="flex items-center gap-2 border border-border text-text-primary px-6 py-2.5 rounded-sm text-[10px] font-bold uppercase tracking-widest hover:bg-border/50 transition-colors"
+            className="flex items-center gap-2 border border-border text-text-primary px-5 py-2 rounded-sm text-[10px] font-bold uppercase tracking-widest hover:bg-border/50 transition-colors"
           >
             <FolderOpen className="w-4 h-4" />
             Categories
           </button>
           <button 
             onClick={openAddModal}
-            className="flex items-center gap-2 bg-text-primary text-white px-6 py-2.5 rounded-sm text-[10px] font-bold uppercase tracking-widest hover:bg-[#333] transition-colors"
+            className="flex items-center gap-2 bg-text-primary text-white px-5 py-2 rounded-sm text-[10px] font-bold uppercase tracking-widest hover:bg-[#333] transition-colors"
           >
             <Plus className="w-4 h-4" />
             Add Item
@@ -155,7 +219,7 @@ export default function MenuManager() {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
-            {allItems.map(item => (
+            {filteredItems.map(item => (
               <tr key={item.id} className={`hover:bg-bg-primary/50 transition-colors ${item.available === false ? 'opacity-50' : ''}`}>
                 <td className="px-6 py-4 flex items-center gap-4">
                   <div className="w-10 h-10 rounded-sm overflow-hidden bg-border shrink-0">
@@ -164,14 +228,14 @@ export default function MenuManager() {
                   <span className="font-medium text-text-primary">{item.name}</span>
                 </td>
                 <td className="px-6 py-4 text-sm text-text-secondary capitalize">
-                  {item.categoryName}
+                  {getCategoryDisplayName(item.categoryName, item.categoryId)}
                 </td>
                 <td className="px-6 py-4 text-sm font-medium text-text-primary">
                   {formatCurrency(item.price)}
                 </td>
                 <td className="px-6 py-4">
                   <button 
-                    onClick={() => toggleItemAvailability(item.categoryId, item.id)}
+                    onClick={() => handleToggleItemAvailability(item.categoryId, item.id)}
                     className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest transition-colors ${
                       item.available !== false 
                         ? 'bg-green-100 text-green-700 hover:bg-green-200' 
@@ -186,7 +250,7 @@ export default function MenuManager() {
                   <button onClick={() => openEditModal(item.categoryId, item)} className="p-2 text-text-secondary hover:text-text-primary transition-colors inline-block">
                     <Edit2 className="w-4 h-4" />
                   </button>
-                  <button onClick={() => deleteMenuItem(item.categoryId, item.id)} className="p-2 text-text-muted hover:text-red-500 transition-colors inline-block ml-2">
+                  <button onClick={() => handleDeleteItem(item.categoryId, item.id)} className="p-2 text-text-muted hover:text-red-500 transition-colors inline-block ml-2">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </td>
@@ -258,7 +322,7 @@ export default function MenuManager() {
                     className="w-full px-4 py-2 border border-border rounded-sm outline-none focus:border-text-secondary bg-transparent capitalize"
                   >
                     {categories.map(cat => (
-                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      <option key={cat.id} value={cat.id}>{getCategoryDisplayName(cat.name, cat.id)}</option>
                     ))}
                   </select>
                 </div>
@@ -362,7 +426,7 @@ export default function MenuManager() {
                 <h3 className="text-xs font-bold uppercase tracking-widest text-text-secondary mb-2">Existing Categories</h3>
                 {categories.map(cat => (
                   <div key={cat.id} className="flex justify-between items-center p-4 border border-border rounded-sm">
-                    <span className="font-medium text-text-primary capitalize">{cat.name}</span>
+                    <span className="font-medium text-text-primary capitalize">{getCategoryDisplayName(cat.name, cat.id)}</span>
                     <div className="flex gap-2">
                       <button 
                         onClick={() => {
@@ -374,7 +438,7 @@ export default function MenuManager() {
                         <Edit2 className="w-4 h-4" />
                       </button>
                       <button 
-                        onClick={() => deleteCategory(cat.id)}
+                        onClick={() => handleDeleteCategory(cat.id)}
                         className="p-1.5 text-text-muted hover:text-red-500 transition-colors"
                       >
                         <Trash2 className="w-4 h-4" />
