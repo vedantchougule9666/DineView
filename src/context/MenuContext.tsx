@@ -201,6 +201,7 @@ export function MenuProvider({ children }: { children: ReactNode }) {
           if (event.data?.type === 'menu-updated' && Array.isArray(event.data?.categories)) {
             if (isSubscribed) {
               setCategories(event.data.categories);
+              console.log('[MenuContext] snapshot ->', event.data.categories.length);
               console.log('[MenuContext] snapshot size ->', event.data.categories.length);
             }
           }
@@ -215,6 +216,7 @@ export function MenuProvider({ children }: { children: ReactNode }) {
       const customEvent = e as CustomEvent<MenuCategory[]>;
       if (customEvent.detail && Array.isArray(customEvent.detail) && isSubscribed) {
         setCategories(customEvent.detail);
+        console.log('[MenuContext] snapshot ->', customEvent.detail.length);
         console.log('[MenuContext] snapshot size ->', customEvent.detail.length);
       }
     };
@@ -235,6 +237,7 @@ export function MenuProvider({ children }: { children: ReactNode }) {
             if (data?.categories && Array.isArray(data.categories) && data.categories.length > 0) {
               setCategories(data.categories);
               broadcastUpdate(data.categories);
+              console.log('[MenuContext] snapshot ->', data.categories.length);
               console.log('[MenuContext] snapshot size ->', data.categories.length);
               return;
             }
@@ -246,6 +249,7 @@ export function MenuProvider({ children }: { children: ReactNode }) {
           if (categoriesRef.current.length === 0) {
             const fallback = getDevFallbackCategories();
             setCategories(fallback);
+            console.log('[MenuContext] snapshot ->', fallback.length);
             console.log('[MenuContext] snapshot size (offline fallback) ->', fallback.length);
           }
         }
@@ -290,6 +294,7 @@ export function MenuProvider({ children }: { children: ReactNode }) {
           if (finalCategories.length > 0) {
             setCategories(finalCategories);
             broadcastUpdate(finalCategories);
+            console.log('[MenuContext] snapshot ->', finalCategories.length);
             console.log('[MenuContext] snapshot size ->', finalCategories.length);
           } else if (snapshot.empty) {
             // Attempt auto-seed if empty
@@ -297,6 +302,7 @@ export function MenuProvider({ children }: { children: ReactNode }) {
               if (categoriesRef.current.length === 0) {
                 const fallback = getDevFallbackCategories();
                 setCategories(fallback);
+                console.log('[MenuContext] snapshot ->', fallback.length);
                 console.log('[MenuContext] snapshot size (seed fallback) ->', fallback.length);
               }
             });
@@ -307,6 +313,7 @@ export function MenuProvider({ children }: { children: ReactNode }) {
           if (categoriesRef.current.length === 0) {
             const fallback = getDevFallbackCategories();
             setCategories(fallback);
+            console.log('[MenuContext] snapshot ->', fallback.length);
             console.log('[MenuContext] snapshot size (offline fallback) ->', fallback.length);
           }
         }

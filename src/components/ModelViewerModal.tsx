@@ -28,7 +28,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
 }) => {
   const { t } = useLanguage();
   const [modelViewerReady, setModelViewerReady] = useState(false);
-  const hiddenViewerRef = useRef<any>(null);
+  const arViewerRef = useRef<any>(null);
   const visibleViewerRef = useRef<any>(null);
   
   // AR lightweight model source - only loaded on user gesture click
@@ -102,7 +102,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
 
   // Listen to AR events on hidden viewer: ar-status, load, progress, model-visibility, error
   useEffect(() => {
-    const viewer = hiddenViewerRef.current;
+    const viewer = arViewerRef.current;
     if (!viewer) return;
 
     const checkReadyAndDismissToast = () => {
@@ -185,12 +185,12 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     };
   }, [triggerToastAndFallback]);
 
-  // 'View in AR' button is pure user gesture: onClick -> set AR viewer src if not set -> viewer.activateAR()
-  // Do not pre-load model on modal open
-  const handleLaunchAR = (e: React.MouseEvent) => {
+  // 'View in AR' button is direct user gesture: onClick -> set AR viewer src if not set -> await activateAR()
+  // Do NOT pre-load the AR model on modal open. Load on click to keep first paint fast.
+  const handleLaunchAR = async (e: React.MouseEvent) => {
     e.stopPropagation();
 
-    const viewer = hiddenViewerRef.current;
+    const viewer = arViewerRef.current;
     if (!viewer) {
       triggerToastAndFallback('AR not supported, showing 3D');
       return;
@@ -200,9 +200,10 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     sessionStartedRef.current = false;
     modelVisibleRef.current = false;
 
-    // Set AR viewer src synchronously to maintain user gesture
-    if (viewer.getAttribute('src') !== effectiveArUrl) {
+    // Set AR viewer src if not set
+    if (!viewer.src || viewer.getAttribute('src') !== effectiveArUrl) {
       viewer.setAttribute('src', effectiveArUrl);
+      viewer.src = effectiveArUrl;
     }
     setArViewerSrc(effectiveArUrl);
     setToast({ type: 'loading', message: 'Preparing AR…' });
@@ -215,16 +216,9 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     }
 
     try {
-      const arResult = viewer.activateAR();
-      if (arResult && typeof arResult.then === 'function') {
-        arResult.catch((error: any) => {
-          console.warn('activateAR rejected:', error);
-          isLaunchingArRef.current = false;
-          triggerToastAndFallback('AR not supported, showing 3D');
-        });
-      }
+      await viewer.activateAR();
     } catch (error: any) {
-      console.warn('AR launch error:', error);
+      console.warn('activateAR rejected:', error);
       isLaunchingArRef.current = false;
       triggerToastAndFallback('AR not supported, showing 3D');
     }
@@ -233,50 +227,34 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
   return (
     <>
       {/* 
-        Hidden AR viewer: 
-        - src set to modelUrlAr only on user click (do not pre-load model on modal open)
-        - ar
-        - ar-modes="webxr scene-viewer quick-look"
-        - ar-scale="fixed" (stops auto-rescale jitter)
-        - ar-placement="ground" (prefer ground plane)
-        - camera-controls
-        - touch-action="pan-y"
-        - exposure="1"
-        - shadow-intensity="0.5" (low shadow to reduce lighting estimation jitter)
-        - environment-image="neutral"
-        - interaction-prompt="none"
+        Hidden AR launcher:
+        - ar-scale="fixed" + camera-orbit preset prevents auto-rescale drift
+        - shadow-intensity="0.5" + environment-image="neutral" reduces lighting estimation jitter
+        - camera-controls="false" + auto-rotate="false" in AR mode
         - reveal="manual"
-        - camera-orbit="0deg 75deg 1.0m" (small anchor)
-        - NO auto-rotate in AR mode
       */}
       {modelViewerReady && (
-        <model-viewer
-          ref={hiddenViewerRef}
-          src={arViewerSrc || undefined}
-          ar
-          ar-modes="webxr scene-viewer quick-look"
-          ar-scale="fixed"
-          ar-placement="ground"
-          camera-controls
-          camera-orbit="0deg 75deg 1.0m"
-          touch-action="pan-y"
-          exposure="1"
-          shadow-intensity="0.5"
-          environment-image="neutral"
-          interaction-prompt="none"
-          reveal="manual"
-          ios-src={effectiveIosSrc || undefined}
-          style={{ 
-            position: 'fixed', 
-            top: '-9999px',
-            left: '-9999px',
-            width: '1px', 
-            height: '1px', 
-            opacity: 0, 
-            pointerEvents: 'none',
-            zIndex: -1 
-          }}
-        />
+        <div style={{ position: 'fixed', top: '-9999px', left: '-9999px', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none', zIndex: -1 }}>
+          <model-viewer
+            ref={arViewerRef}
+            src={arViewerSrc || undefined}
+            ios-src={effectiveIosSrc || undefined}
+            ar
+            ar-modes="webxr scene-viewer quick-look"
+            ar-scale="fixed"
+            ar-placement="ground"
+            camera-orbit="0deg 75deg 1.0m"
+            field-of-view="40deg"
+            exposure="1"
+            shadow-intensity="0.5"
+            environment-image="neutral"
+            interaction-prompt="none"
+            auto-rotate="false"
+            camera-controls="false"
+            reveal="manual"
+            style={{ width: '100%', height: '100%' }}
+          />
+        </div>
       )}
 
       {/* Trigger Button - Pure user gesture calling activateAR() */}

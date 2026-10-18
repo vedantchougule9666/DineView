@@ -1,17 +1,18 @@
 import React from 'react';
 import { useOrder } from '../../context/OrderContext';
-import { MENU_DATA } from '../../data/menu';
+import { useMenu } from '../../context/MenuContext';
 import { DollarSign, ShoppingBag, Clock } from 'lucide-react';
 import { formatCurrency } from '../../utils/currency';
 
 export default function AdminDashboard() {
   const { orders } = useOrder();
+  const { categories } = useMenu();
   
   const todayOrders = orders.filter(o => new Date(o.createdAt).toDateString() === new Date().toDateString());
   const todayRevenue = todayOrders.reduce((sum, o) => sum + o.total, 0);
   const pendingOrders = orders.filter(o => o.status === 'pending' || o.status === 'preparing');
   
-  const totalItems = MENU_DATA.reduce((sum, cat) => sum + cat.items.length, 0);
+  const totalItems = categories.reduce((sum, cat) => sum + cat.items.length, 0);
 
   return (
     <div>
