@@ -26,6 +26,7 @@ const MenuManager = React.lazy(() => import('./pages/admin/MenuManager'));
 const MenuEditor = React.lazy(() => import('./pages/admin/MenuEditor'));
 const OrderManager = React.lazy(() => import('./pages/admin/OrderManager'));
 const TableManager = React.lazy(() => import('./pages/admin/TableManager'));
+const SessionHistoryPage = React.lazy(() => import('./pages/admin/SessionHistoryPage'));
 
 // Lazy-load Kitchen Manager pages
 const ManagerLayout = React.lazy(() => import('./pages/manager/ManagerLayout'));
@@ -73,6 +74,7 @@ export default function App() {
                         <Route path="menu" element={<MenuEditor />} />
                         <Route path="menu-editor" element={<MenuEditor />} />
                         <Route path="orders" element={<OrderManager />} />
+                        <Route path="sessions" element={<SessionHistoryPage />} />
                         <Route path="tables" element={<TableManager />} />
                       </Route>
 

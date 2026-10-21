@@ -1,6 +1,11 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // DineView Table Sessions: Shared active table tab aggregating multi-phone orders
+    match /sessions/{sessionId} {
+      allow read, write: if true;
+    }
+
     // DineView Orders: Created by guests with real phone verification, confirmed/edited by kitchen managers
     match /orders/{orderId} {
       allow read, write: if true;

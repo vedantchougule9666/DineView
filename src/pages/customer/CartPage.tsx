@@ -81,7 +81,7 @@ export default function CartPage() {
       }
 
       // Place order in Firestore
-      const orderId = placeOrder(
+      const orderId = await placeOrder(
         items,
         total,
         activeTableId,

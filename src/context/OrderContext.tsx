@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, ReactNode, useEffect } from
 import { useLocation } from 'react-router-dom';
 import { CartItem } from './CartContext';
 import { db } from '../lib/firebase';
-import { collection, doc, setDoc, updateDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, setDoc, updateDoc, onSnapshot, query, orderBy, limit, getDoc } from 'firebase/firestore';
+import { ensureSession, addOrderToSession, recalcSessionTotal } from '../services/sessionService';
 
 export type OrderStatus = 'pending' | 'preparing' | 'ready' | 'completed' | 'cancelled';
 
@@ -14,6 +15,7 @@ export interface Order {
   createdAt: string;
   tableId?: string;
   tableName?: string;
+  tableSessionId?: string;
   customerPhone?: string;
   phoneVerified?: boolean;
   guestUid?: string;
@@ -31,8 +33,8 @@ interface OrderContextType {
     tableId?: string,
     tableName?: string,
     customerPhone?: string
-  ) => string;
-  updateOrderStatus: (orderId: string, status: OrderStatus) => void;
+  ) => Promise<string>;
+  updateOrderStatus: (orderId: string, status: OrderStatus) => Promise<void>;
   updateOrderItems: (
     orderId: string,
     items: CartItem[],
@@ -61,7 +63,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(50));
+    const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(100));
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -79,19 +81,33 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, [location.pathname]);
 
-  const placeOrder = (
+  const placeOrder = async (
     items: CartItem[],
     total: number,
     tableId?: string,
     tableName?: string,
     customerPhone?: string
-  ) => {
+  ): Promise<string> => {
     const orderId = Math.random().toString(36).substring(2, 9).toUpperCase();
     const resolvedTableId = tableId && tableId.trim() ? tableId.trim() : 'COUNTER';
     const resolvedTableName = tableName && tableName.trim()
       ? tableName.trim()
       : (resolvedTableId === 'COUNTER' ? 'Counter' : `Table ${resolvedTableId}`);
 
+    // Step 1: ensureSession runs BEFORE order write (COUNTER orders bypass session creation)
+    let tableSessionId: string | undefined = undefined;
+    if (resolvedTableId !== 'COUNTER') {
+      try {
+        const session = await ensureSession(resolvedTableId, resolvedTableName, customerPhone);
+        if (session) {
+          tableSessionId = session.id;
+        }
+      } catch (sessErr) {
+        console.error('Failed to ensure session before order placement:', sessErr);
+      }
+    }
+
+    // Step 2: Build order entity
     const newOrder: Order = {
       id: orderId,
       items,
@@ -100,23 +116,52 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       createdAt: new Date().toISOString(),
       tableId: resolvedTableId,
       tableName: resolvedTableName,
+      tableSessionId,
       customerPhone: customerPhone ? customerPhone.trim() : '',
       phoneVerified: false,
     };
     
-    // Save to Firestore
-    setDoc(doc(db, 'orders', orderId), newOrder).catch(err => {
-      console.error("Failed to place order in Firestore", err);
-    });
+    // Step 3: Write order to Firestore
+    await setDoc(doc(db, 'orders', orderId), newOrder);
+
+    // Step 4: Atomically link order to table session
+    if (tableSessionId) {
+      try {
+        const itemsCount = items.reduce((acc, it) => acc + (it.quantity || 1), 0);
+        await addOrderToSession(tableSessionId, {
+          id: orderId,
+          total,
+          itemsCount,
+        });
+      } catch (aggErr) {
+        console.error('Failed to add order to session aggregate:', aggErr);
+      }
+    }
 
     return orderId;
   };
 
-  const updateOrderStatus = (orderId: string, status: OrderStatus) => {
-    // Update in Firestore
-    updateDoc(doc(db, 'orders', orderId), { status }).catch(err => {
-      console.error("Failed to update order status in Firestore", err);
-    });
+  const updateOrderStatus = async (orderId: string, status: OrderStatus) => {
+    try {
+      const orderRef = doc(db, 'orders', orderId);
+      await updateDoc(orderRef, { status });
+
+      // If order was cancelled, recalculate session totals
+      if (status === 'cancelled') {
+        const order = orders.find(o => o.id === orderId);
+        let sessionId = order?.tableSessionId;
+        if (!sessionId) {
+          const snap = await getDoc(orderRef);
+          sessionId = snap.data()?.tableSessionId;
+        }
+        if (sessionId) {
+          await recalcSessionTotal(sessionId);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update order status in Firestore', err);
+      throw err;
+    }
   };
 
   const updateOrderItems = async (
@@ -132,7 +177,20 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     if (kitchenNotes !== undefined) {
       payload.kitchenNotes = kitchenNotes;
     }
-    await updateDoc(doc(db, 'orders', orderId), payload);
+
+    const orderRef = doc(db, 'orders', orderId);
+    await updateDoc(orderRef, payload);
+
+    // Recalculate parent table session to keep bill in sync
+    const order = orders.find(o => o.id === orderId);
+    let sessionId = order?.tableSessionId;
+    if (!sessionId) {
+      const snap = await getDoc(orderRef);
+      sessionId = snap.data()?.tableSessionId;
+    }
+    if (sessionId) {
+      await recalcSessionTotal(sessionId);
+    }
   };
 
   const confirmOrder = async (
@@ -179,4 +237,3 @@ export function useOrder() {
   }
   return context;
 }
-

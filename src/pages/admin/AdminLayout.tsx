@@ -1,7 +1,7 @@
 import React from 'react';
 import { Outlet, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { LogOut, LayoutDashboard, UtensilsCrossed, ClipboardList, QrCode } from 'lucide-react';
+import { LogOut, LayoutDashboard, UtensilsCrossed, ClipboardList, QrCode, Users } from 'lucide-react';
 
 export default function AdminLayout() {
   const { isAdmin, logout } = useAuth();
@@ -45,6 +45,15 @@ export default function AdminLayout() {
           >
             <ClipboardList className="w-4 h-4" />
             Orders
+          </button>
+          <button 
+            onClick={() => navigate('/admin/sessions')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-sm text-sm font-medium transition-colors ${
+              location.pathname === '/admin/sessions' ? 'bg-text-primary text-white' : 'text-text-secondary hover:bg-border/30 hover:text-text-primary'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            Sessions
           </button>
           <button 
             onClick={() => navigate('/admin/tables')}

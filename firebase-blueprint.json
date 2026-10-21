@@ -12,6 +12,7 @@
         "createdAt": { "type": "string" },
         "tableId": { "type": "string" },
         "tableName": { "type": "string" },
+        "tableSessionId": { "type": "string" },
         "customerPhone": { "type": "string" },
         "guestUid": { "type": "string" },
         "managerConfirmed": { "type": "boolean" },
@@ -20,6 +21,27 @@
         "kitchenNotes": { "type": "string" }
       },
       "required": ["id", "items", "total", "status", "createdAt"]
+    },
+    "Session": {
+      "title": "Session",
+      "description": "Shared table dining session consolidating multiple orders, total bill, and time slot",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "shortId": { "type": "string" },
+        "tableId": { "type": "string" },
+        "tableName": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "closed"] },
+        "startedAt": { "type": "string" },
+        "endedAt": { "type": "string" },
+        "durationMinutes": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "itemsCount": { "type": "number" },
+        "orderIds": { "type": "array" },
+        "createdByPhone": { "type": "string" },
+        "closedBy": { "type": "string" }
+      },
+      "required": ["id", "shortId", "tableId", "tableName", "status", "startedAt", "totalAmount", "itemsCount"]
     },
     "CustomerProfile": {
       "title": "CustomerProfile",
@@ -47,12 +69,17 @@
         "id": { "type": "string" },
         "name": { "type": "string" },
         "active": { "type": "boolean" },
+        "activeSessionId": { "type": "string" },
         "createdAt": { "type": "string" }
       },
       "required": ["id", "name", "active"]
     }
   },
   "firestore": {
+    "/sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "Collection of shared dining table sessions"
+    },
     "/orders/{orderId}": {
       "schema": "Order",
       "description": "Collection of dining orders placed by customers and managed by staff"

@@ -261,7 +261,7 @@ async function startServer() {
 
   // AI Food Assistant Chat endpoint powered by Gemini
   app.post("/api/chat", async (req, res) => {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: "GEMINI_API_KEY not configured" });
     }

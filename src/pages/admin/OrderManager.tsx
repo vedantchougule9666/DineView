@@ -370,16 +370,23 @@ export default function OrderManager() {
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      {order.tableId && order.tableId !== 'COUNTER' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                          Table {order.tableId}
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 border border-neutral-200">
-                          Counter
-                        </span>
-                      )}
+                      <div className="flex flex-col gap-1 items-start">
+                        {order.tableId && order.tableId !== 'COUNTER' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                            Table {order.tableId}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 border border-neutral-200">
+                            Counter
+                          </span>
+                        )}
+                        {order.tableSessionId && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-accent px-1.5 py-0.5 rounded bg-accent/10 border border-accent/20">
+                            Session #{order.tableSessionId.split('_').pop()?.substring(0, 4).toUpperCase()}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-xs text-text-secondary whitespace-nowrap">
                       <div className="flex items-center gap-1 text-text-primary font-medium">

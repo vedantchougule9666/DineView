@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
 import { Order } from '../../context/OrderContext';
-import { CheckCircle2, Clock, ChefHat, PackageCheck, ChevronLeft } from 'lucide-react';
+import { CheckCircle2, Clock, ChefHat, PackageCheck, ChevronLeft, Users, Receipt } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { formatCurrency } from '../../utils/currency';
 import { getMenuItemName } from '../../data/menu';
+import { TableSession } from '../../services/sessionService';
 
 export default function OrderStatusPage() {
   const { id } = useParams<{ id: string }>();
   const [order, setOrder] = useState<Order | null>(null);
+  const [session, setSession] = useState<TableSession | null>(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const { lang, t } = useOutletContext<{ lang: string; t: Record<string, string>; isRTL?: boolean }>();
@@ -39,6 +41,30 @@ export default function OrderStatusPage() {
 
     return () => unsubscribe();
   }, [id]);
+
+  // Subscribe to parent table session if linked
+  useEffect(() => {
+    if (!order?.tableSessionId) {
+      setSession(null);
+      return;
+    }
+
+    const unsubscribeSession = onSnapshot(
+      doc(db, 'sessions', order.tableSessionId),
+      (sessDoc) => {
+        if (sessDoc.exists()) {
+          setSession(sessDoc.data() as TableSession);
+        } else {
+          setSession(null);
+        }
+      },
+      (err) => {
+        console.warn('Could not subscribe to session:', err);
+      }
+    );
+
+    return () => unsubscribeSession();
+  }, [order?.tableSessionId]);
 
   if (loading) {
     return (
@@ -76,29 +102,80 @@ export default function OrderStatusPage() {
 
   const currentStepIndex = steps.findIndex(s => s.id === order.status);
 
+  // Format session start time
+  const sessionStartTime = session?.startedAt 
+    ? new Date(session.startedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : null;
+
   return (
     <div className="max-w-2xl mx-auto px-6 py-12">
       <button 
         onClick={() => navigate('/')}
-        className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors mb-12 font-bold uppercase tracking-widest text-[10px]"
+        className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors mb-8 font-bold uppercase tracking-widest text-[10px]"
       >
         <ChevronLeft className="w-4 h-4 rtl:rotate-180" />
         {t.back_to_menu || 'Back to Menu'}
       </button>
 
-      <div className="text-center mb-16">
-        <h1 className="text-4xl font-serif text-text-primary mb-2">
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-serif text-text-primary mb-3">
           {t.order_number || 'Order'} #{order.id}
         </h1>
-        <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full border border-border bg-border/20 text-xs font-bold uppercase tracking-wider text-text-primary mb-4">
-          <span className={`w-1.5 h-1.5 rounded-full ${order.tableId && order.tableId !== 'COUNTER' ? 'bg-accent' : 'bg-neutral-400'}`}></span>
-          <span>{order.tableId && order.tableId !== 'COUNTER' ? `Table ${order.tableId}` : 'Counter'}</span>
-        </div>
-        <p className="text-text-secondary">
+
+        {/* Shared Table Session Badge */}
+        {session && session.shortId ? (
+          <div className="inline-flex flex-wrap items-center justify-center gap-2 px-4 py-1.5 rounded-full border border-accent/40 bg-accent/10 text-xs font-bold uppercase tracking-wider text-text-primary mb-3">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Table {order.tableId || session.tableId}</span>
+            <span className="text-text-muted">•</span>
+            <span className="text-accent font-semibold">Session #{session.shortId}</span>
+            {sessionStartTime && (
+              <>
+                <span className="text-text-muted">•</span>
+                <span className="text-text-secondary font-medium">Started {sessionStartTime}</span>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full border border-border bg-border/20 text-xs font-bold uppercase tracking-wider text-text-primary mb-3">
+            <span className={`w-1.5 h-1.5 rounded-full ${order.tableId && order.tableId !== 'COUNTER' ? 'bg-accent' : 'bg-neutral-400'}`}></span>
+            <span>{order.tableId && order.tableId !== 'COUNTER' ? `Table ${order.tableId}` : 'Counter'}</span>
+          </div>
+        )}
+
+        <p className="text-text-secondary text-sm">
           {order.tableId && order.tableId !== 'COUNTER'
-            ? 'Your order is being prepared and will be served to your table.'
+            ? 'Your dishes are being prepared by our culinary team and will be brought directly to your table.'
             : (t.order_pay_counter_desc || 'Please proceed to the counter to pay and mention your order number.')}
         </p>
+
+        {/* Live Shared Table Session Card */}
+        {session && (
+          <div className="mt-5 p-4 rounded-md border border-border bg-white text-left shadow-xs">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-text-primary">
+                <Users className="w-4 h-4 text-accent" />
+                <span>Shared Table Tab</span>
+              </div>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                session.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-neutral-100 text-neutral-600'
+              }`}>
+                {session.status === 'active' ? 'Active Session' : 'Closed Tab'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-xs text-text-secondary">
+              <span>All phones at Table {session.tableId} combined:</span>
+              <span className="font-semibold text-text-primary text-sm">
+                {session.itemsCount} items • {formatCurrency(session.totalAmount)}
+              </span>
+            </div>
+            {session.status === 'closed' && (
+              <p className="mt-2 text-[11px] text-text-muted italic border-t border-border pt-2">
+                This table session has been closed by the manager. Any subsequent order placed from this table will automatically start a fresh session.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="relative mb-16">
@@ -133,10 +210,17 @@ export default function OrderStatusPage() {
         </div>
       </div>
 
+      {/* Order Items Breakdown */}
       <div className="bg-border/20 rounded-sm p-8">
-        <h3 className="font-serif text-xl mb-6">
-          {t.order_details || 'Order Details'}
-        </h3>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="font-serif text-xl">
+            {t.order_details || 'This Order Items'}
+          </h3>
+          <span className="text-xs text-text-secondary uppercase tracking-widest font-bold">
+            Order #{order.id}
+          </span>
+        </div>
+        
         <div className="flex flex-col gap-4 mb-6">
           {order.items.map(item => {
             const itemName = getMenuItemName(item, lang);
@@ -148,14 +232,23 @@ export default function OrderStatusPage() {
             );
           })}
         </div>
+
         <div className="border-t border-border/50 pt-4 mb-2 flex justify-between items-center text-sm text-text-secondary">
           <span>Table</span>
           <span className="font-semibold text-text-primary">
             {order.tableId && order.tableId !== 'COUNTER' ? `Table ${order.tableId}` : 'Counter'}
           </span>
         </div>
+
+        {order.kitchenNotes && (
+          <div className="border-t border-border/50 pt-3 mb-2 text-xs text-text-secondary">
+            <span className="font-semibold text-text-primary">Kitchen Note: </span>
+            <span>{order.kitchenNotes}</span>
+          </div>
+        )}
+
         <div className="border-t border-border/50 pt-4 flex justify-between items-center font-medium">
-          <span className="text-text-primary">{t.order_total || 'Total'}</span>
+          <span className="text-text-primary">Order Total</span>
           <span className="text-xl font-serif text-text-primary">{formatCurrency(order.total)}</span>
         </div>
       </div>
