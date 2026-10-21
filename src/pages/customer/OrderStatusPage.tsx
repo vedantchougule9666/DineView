@@ -50,7 +50,7 @@ export default function OrderStatusPage() {
     }
 
     const unsubscribeSession = onSnapshot(
-      doc(db, 'sessions', order.tableSessionId),
+      doc(db, 'orders', order.tableSessionId),
       (sessDoc) => {
         if (sessDoc.exists()) {
           setSession(sessDoc.data() as TableSession);

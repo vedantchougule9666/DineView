@@ -3,7 +3,7 @@ import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useCart } from '../../context/CartContext';
 import { useOrder } from '../../context/OrderContext';
 import { useTable } from '../../context/TableContext';
-import { ChevronLeft, Plus, Minus, Trash2, Phone, ArrowRight, Loader2, Sparkles } from 'lucide-react';
+import { ChevronLeft, Plus, Minus, Trash2, Phone, ArrowRight, Loader2, Sparkles, AlertCircle, X } from 'lucide-react';
 import { formatCurrency } from '../../utils/currency';
 import { getMenuItemName } from '../../data/menu';
 import { formatPhone, recordCustomerOrder } from '../../services/customerService';
@@ -38,6 +38,7 @@ export default function CartPage() {
   const [selectedCountryCode, setSelectedCountryCode] = useState('+91');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [orderError, setOrderError] = useState<{ code: string; message: string } | null>(null);
 
   // Initialize phone from localStorage if returning guest
   useEffect(() => {
@@ -70,6 +71,7 @@ export default function CartPage() {
     if (items.length === 0 || isSubmitting) return;
 
     setIsSubmitting(true);
+    setOrderError(null);
     try {
       const fullPhone = getFullPhoneNumber();
 
@@ -113,9 +115,11 @@ export default function CartPage() {
 
       clearCart();
       navigate(`/order/${orderId}`);
-    } catch (err) {
-      console.error('Failed to place order:', err);
-      alert('Could not place order. Please try again.');
+    } catch (err: any) {
+      console.error('[CartPage] Failed to place order:', err);
+      const code = err?.code || (err?.message?.includes(':') ? err.message.split(':')[0].trim() : 'ORDER_FAILED');
+      const message = err?.message || 'Could not place order. Please try again.';
+      setOrderError({ code, message });
     } finally {
       setIsSubmitting(false);
     }
@@ -268,6 +272,33 @@ export default function CartPage() {
                 />
               </div>
             </div>
+
+            {/* Error Surface Toast */}
+            {orderError && (
+              <div className="mb-4 p-3.5 rounded-sm bg-red-50 border border-red-300 text-red-900 animate-in fade-in slide-in-from-top-1 text-left">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-xs uppercase tracking-wider text-red-900">Order Error</span>
+                        <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-red-200/80 text-red-900 font-bold">
+                          {orderError.code}
+                        </span>
+                      </div>
+                      <p className="text-xs text-red-800 mt-1 leading-snug">{orderError.message}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOrderError(null)}
+                    className="text-red-500 hover:text-red-800 shrink-0 p-0.5"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Direct Place Order Button */}
             <button

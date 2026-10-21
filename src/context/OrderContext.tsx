@@ -69,7 +69,10 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       (snapshot) => {
         const fetchedOrders: Order[] = [];
         snapshot.forEach((doc) => {
-          fetchedOrders.push(doc.data() as Order);
+          const data = doc.data() as any;
+          if (!data.isSession && data.items && Array.isArray(data.items)) {
+            fetchedOrders.push(data as Order);
+          }
         });
         setOrders(fetchedOrders);
       },
@@ -88,57 +91,93 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     tableName?: string,
     customerPhone?: string
   ): Promise<string> => {
-    const orderId = Math.random().toString(36).substring(2, 9).toUpperCase();
-    const resolvedTableId = tableId && tableId.trim() ? tableId.trim() : 'COUNTER';
-    const resolvedTableName = tableName && tableName.trim()
-      ? tableName.trim()
-      : (resolvedTableId === 'COUNTER' ? 'Counter' : `Table ${resolvedTableId}`);
+    try {
+      // 1. Validate cart inputs
+      if (!items || items.length === 0) {
+        const err: any = new Error('Your cart is empty. Please add menu items before ordering.');
+        err.code = 'CART_EMPTY';
+        throw err;
+      }
 
-    // Step 1: ensureSession runs BEFORE order write (COUNTER orders bypass session creation)
-    let tableSessionId: string | undefined = undefined;
-    if (resolvedTableId !== 'COUNTER') {
-      try {
-        const session = await ensureSession(resolvedTableId, resolvedTableName, customerPhone);
-        if (session) {
-          tableSessionId = session.id;
+      if (typeof total !== 'number' || total <= 0) {
+        const err: any = new Error('Invalid order total.');
+        err.code = 'INVALID_TOTAL';
+        throw err;
+      }
+
+      // 2. Validate inputs before session
+      const resolvedTableId = tableId && tableId.trim() ? tableId.trim().toUpperCase() : 'COUNTER';
+      const resolvedTableName = tableName && tableName.trim()
+        ? tableName.trim()
+        : (resolvedTableId === 'COUNTER' ? 'Counter' : `Table ${resolvedTableId}`);
+
+      let tableSessionId: string | undefined = undefined;
+
+      // If tableId === 'COUNTER' skip ensureSession entirely and set tableSessionId = undefined
+      if (resolvedTableId !== 'COUNTER') {
+        try {
+          const session = await ensureSession(resolvedTableId, resolvedTableName, customerPhone);
+          if (session?.id) {
+            tableSessionId = session.id;
+          }
+        } catch (sessErr: any) {
+          console.error('[placeOrder] ensureSession failed for table', resolvedTableId, sessErr);
+          throw sessErr;
         }
-      } catch (sessErr) {
-        console.error('Failed to ensure session before order placement:', sessErr);
       }
-    }
 
-    // Step 2: Build order entity
-    const newOrder: Order = {
-      id: orderId,
-      items,
-      total,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-      tableId: resolvedTableId,
-      tableName: resolvedTableName,
-      tableSessionId,
-      customerPhone: customerPhone ? customerPhone.trim() : '',
-      phoneVerified: false,
-    };
-    
-    // Step 3: Write order to Firestore
-    await setDoc(doc(db, 'orders', orderId), newOrder);
+      // 3. Create order entity with tableSessionId
+      const orderId = Math.random().toString(36).substring(2, 9).toUpperCase();
+      const newOrder: Order = {
+        id: orderId,
+        items,
+        total,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        tableId: resolvedTableId,
+        tableName: resolvedTableName,
+        customerPhone: customerPhone ? customerPhone.trim() : '',
+        phoneVerified: false,
+      };
 
-    // Step 4: Atomically link order to table session
-    if (tableSessionId) {
-      try {
-        const itemsCount = items.reduce((acc, it) => acc + (it.quantity || 1), 0);
-        await addOrderToSession(tableSessionId, {
-          id: orderId,
-          total,
-          itemsCount,
-        });
-      } catch (aggErr) {
-        console.error('Failed to add order to session aggregate:', aggErr);
+      // Only attach tableSessionId if defined (avoiding undefined in Firestore)
+      if (tableSessionId) {
+        newOrder.tableSessionId = tableSessionId;
       }
-    }
 
-    return orderId;
+      // Write order to Firestore
+      await setDoc(doc(db, 'orders', orderId), newOrder);
+      console.log('[placeOrder] Order created in firestore:', orderId, 'table:', resolvedTableId, 'session:', tableSessionId);
+
+      // 4. Atomically link order to table session
+      if (tableSessionId) {
+        try {
+          const itemsCount = items.reduce((acc, it) => acc + (it.quantity || 1), 0);
+          await addOrderToSession(tableSessionId, {
+            id: orderId,
+            total,
+            itemsCount,
+          });
+        } catch (sessionErr: any) {
+          console.error('[placeOrder] addOrderToSession failed, marking order failed:', sessionErr);
+          // If addOrderToSession fails, mark order as cancelled/failed
+          try {
+            await updateDoc(doc(db, 'orders', orderId), { 
+              status: 'cancelled',
+              kitchenNotes: `Session aggregation failed: ${sessionErr?.message || sessionErr}`
+            });
+          } catch (cleanupErr) {
+            console.warn('[placeOrder] Could not mark orphan order cancelled:', cleanupErr);
+          }
+          throw sessionErr;
+        }
+      }
+
+      return orderId;
+    } catch (error: any) {
+      console.error('[placeOrder] error', error?.code, error?.message, error?.stack);
+      throw error;
+    }
   };
 
   const updateOrderStatus = async (orderId: string, status: OrderStatus) => {

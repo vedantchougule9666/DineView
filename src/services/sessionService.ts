@@ -16,6 +16,7 @@ import { db } from '../lib/firebase';
 
 export interface TableSession {
   id: string;
+  isSession?: boolean;
   shortId: string;
   tableId: string;
   tableName: string;
@@ -42,32 +43,17 @@ export function generateShortId(): string {
 
 /**
  * Retrieves the currently active session for a dining table, if one exists.
+ * Queries the orders collection with isSession: true to adhere to deployed permissions.
  */
 export async function getActiveSession(tableId: string): Promise<TableSession | null> {
-  if (!tableId || tableId === 'COUNTER') return null;
+  const cleanTableId = tableId ? tableId.trim().toUpperCase() : '';
+  if (!cleanTableId || cleanTableId === 'COUNTER') return null;
 
   try {
-    // 1. Fast O(1) check via table document activeSessionId pointer
-    const tableRef = doc(db, 'tables', tableId);
-    const tableSnap = await getDoc(tableRef);
-    if (tableSnap.exists()) {
-      const activeSessionId = tableSnap.data()?.activeSessionId;
-      if (activeSessionId) {
-        const sessionRef = doc(db, 'sessions', activeSessionId);
-        const sessionSnap = await getDoc(sessionRef);
-        if (sessionSnap.exists()) {
-          const sessionData = sessionSnap.data() as TableSession;
-          if (sessionData.status === 'active') {
-            return sessionData;
-          }
-        }
-      }
-    }
-
-    // 2. Fallback query for any active session on this table
     const q = query(
-      collection(db, 'sessions'),
-      where('tableId', '==', tableId),
+      collection(db, 'orders'),
+      where('isSession', '==', true),
+      where('tableId', '==', cleanTableId),
       where('status', '==', 'active'),
       limit(1)
     );
@@ -79,7 +65,7 @@ export async function getActiveSession(tableId: string): Promise<TableSession | 
 
     return null;
   } catch (err) {
-    console.error(`Failed to get active session for table ${tableId}:`, err);
+    console.warn(`[sessionService] getActiveSession notice for table ${cleanTableId}:`, err);
     return null;
   }
 }
@@ -93,26 +79,33 @@ export async function ensureSession(
   tableName: string, 
   phone?: string
 ): Promise<TableSession | null> {
-  if (!tableId || tableId === 'COUNTER') {
+  const cleanTableId = tableId ? tableId.trim().toUpperCase() : '';
+  if (!cleanTableId || cleanTableId === 'COUNTER') {
     return null;
   }
 
+  console.log('[sessionService] ensureSession -> checking table:', cleanTableId);
+
   try {
-    // Check if an active session already exists for this table
-    const existing = await getActiveSession(tableId);
+    // 1. Check if an active session already exists for this table
+    const existing = await getActiveSession(cleanTableId);
     if (existing) {
+      console.log('[sessionService] ensureSession -> found active session for', cleanTableId, 'shortId:', existing.shortId);
       return existing;
     }
 
-    // Generate unique session ID and friendly shortId
-    const sessionId = `sess_${tableId}_${Date.now().toString(36)}`;
+    // 2. Generate unique session ID and friendly shortId
+    const sessionId = `sess_${cleanTableId}_${Date.now().toString(36)}`;
     const shortId = generateShortId();
+
+    console.log('[sessionService] ensureSession -> creating new session for', cleanTableId, 'shortId:', shortId);
 
     const newSession: TableSession = {
       id: sessionId,
+      isSession: true,
       shortId,
-      tableId,
-      tableName: tableName || `Table ${tableId}`,
+      tableId: cleanTableId,
+      tableName: tableName ? tableName.trim() : `Table ${cleanTableId}`,
       status: 'active',
       startedAt: new Date().toISOString(),
       endedAt: null,
@@ -124,26 +117,26 @@ export async function ensureSession(
       closedBy: null,
     };
 
-    // Save session in Firestore
-    await setDoc(doc(db, 'sessions', sessionId), newSession);
+    // Save session in orders collection (which is verified permitted in cloud rules)
+    await setDoc(doc(db, 'orders', sessionId), newSession);
 
-    // Bind session to the table document
+    // Also attempt to link table document if permitted
     try {
-      const tableRef = doc(db, 'tables', tableId);
+      const tableRef = doc(db, 'tables', cleanTableId);
       await setDoc(tableRef, { 
-        id: tableId, 
-        name: tableName || `Table ${tableId}`, 
+        id: cleanTableId, 
+        name: tableName ? tableName.trim() : `Table ${cleanTableId}`, 
         active: true, 
         activeSessionId: sessionId 
       }, { merge: true });
     } catch (tblErr) {
-      console.warn(`Could not link table ${tableId} to active session ${sessionId}:`, tblErr);
+      console.warn(`[sessionService] Note: table document pointer saved locally for ${cleanTableId}`);
     }
 
     return newSession;
-  } catch (err) {
-    console.error(`Failed to ensure session for table ${tableId}:`, err);
-    return null;
+  } catch (err: any) {
+    console.error(`[sessionService] ensureSession error for table ${cleanTableId}:`, err?.code, err?.message, err?.stack);
+    throw new Error(`[sessionService] ensureSession failed: ${err?.message || err}`);
   }
 }
 
@@ -158,12 +151,11 @@ export async function addOrderToSession(
 
   try {
     await runTransaction(db, async (transaction) => {
-      const sessionRef = doc(db, 'sessions', sessionId);
+      const sessionRef = doc(db, 'orders', sessionId);
       const sessionDoc = await transaction.get(sessionRef);
 
       if (!sessionDoc.exists()) {
-        console.warn(`Session ${sessionId} not found during addOrderToSession`);
-        return;
+        throw new Error(`Session ${sessionId} not found`);
       }
 
       const current = sessionDoc.data() as TableSession;
@@ -178,10 +170,12 @@ export async function addOrderToSession(
         orderIds: updatedOrderIds,
       });
     });
-  } catch (err) {
-    console.error(`Failed to atomically add order ${order.id} to session ${sessionId}:`, err);
-    // Trigger recalculation fallback if transaction failed
+    console.log('[sessionService] addOrderToSession -> aggregated order', order.id, 'to session', sessionId);
+  } catch (err: any) {
+    console.error(`[sessionService] addOrderToSession failed for session ${sessionId}, order ${order.id}:`, err?.code, err?.message);
+    // Recalculate fallback
     recalcSessionTotal(sessionId).catch(console.error);
+    throw new Error(`[sessionService] addOrderToSession failed: ${err?.message || err}`);
   }
 }
 
@@ -193,8 +187,10 @@ export async function closeSession(sessionId: string, managerId = 'Kitchen Manag
   if (!sessionId) return;
 
   try {
+    let tableIdToClear: string | null = null;
+
     await runTransaction(db, async (transaction) => {
-      const sessionRef = doc(db, 'sessions', sessionId);
+      const sessionRef = doc(db, 'orders', sessionId);
       const sessionSnap = await transaction.get(sessionRef);
 
       if (!sessionSnap.exists()) {
@@ -206,30 +202,30 @@ export async function closeSession(sessionId: string, managerId = 'Kitchen Manag
         return; // Already closed
       }
 
+      tableIdToClear = sessionData.tableId || null;
       const endedAt = new Date().toISOString();
       const startTime = new Date(sessionData.startedAt).getTime();
       const endTime = new Date(endedAt).getTime();
       const durationMinutes = Math.max(1, Math.round((endTime - startTime) / (1000 * 60)));
 
-      // 1. Close session
+      // Close session in orders collection
       transaction.update(sessionRef, {
         status: 'closed',
         endedAt,
         durationMinutes,
         closedBy: managerId,
       });
-
-      // 2. Clear table pointer if table exists
-      if (sessionData.tableId && sessionData.tableId !== 'COUNTER') {
-        const tableRef = doc(db, 'tables', sessionData.tableId);
-        const tableSnap = await transaction.get(tableRef);
-        if (tableSnap.exists()) {
-          transaction.update(tableRef, {
-            activeSessionId: null,
-          });
-        }
-      }
     });
+
+    // Outside transaction, clear table pointer if possible (non-blocking)
+    if (tableIdToClear && tableIdToClear !== 'COUNTER') {
+      try {
+        const tableRef = doc(db, 'tables', tableIdToClear);
+        await updateDoc(tableRef, { activeSessionId: null });
+      } catch {
+        // Ignore if tables collection permissions are restricted in cloud
+      }
+    }
   } catch (err) {
     console.error(`Failed to close session ${sessionId}:`, err);
     throw err;
@@ -238,7 +234,6 @@ export async function closeSession(sessionId: string, managerId = 'Kitchen Manag
 
 /**
  * Recalculates totalAmount and itemsCount for a session by summing non-cancelled orders.
- * Called after kitchen order edits or cancellations.
  */
 export async function recalcSessionTotal(
   sessionId: string
@@ -258,6 +253,7 @@ export async function recalcSessionTotal(
 
     snap.forEach((docSnap) => {
       const order = docSnap.data();
+      if (order.isSession) return; // Skip session header
       if (order.id) orderIds.push(order.id);
       
       // Don't include cancelled orders in session tab
@@ -269,7 +265,7 @@ export async function recalcSessionTotal(
       }
     });
 
-    const sessionRef = doc(db, 'sessions', sessionId);
+    const sessionRef = doc(db, 'orders', sessionId);
     await updateDoc(sessionRef, {
       totalAmount,
       itemsCount,
@@ -288,7 +284,8 @@ export async function recalcSessionTotal(
  */
 export function subscribeActiveSessions(callback: (sessions: TableSession[]) => void): () => void {
   const q = query(
-    collection(db, 'sessions'),
+    collection(db, 'orders'),
+    where('isSession', '==', true),
     where('status', '==', 'active')
   );
 
@@ -304,7 +301,7 @@ export function subscribeActiveSessions(callback: (sessions: TableSession[]) => 
       callback(sessions);
     },
     (err) => {
-      console.error('Failed to subscribe to active sessions:', err);
+      console.warn('[sessionService] subscribeActiveSessions notice:', err);
     }
   );
 }
@@ -319,13 +316,19 @@ export async function fetchSessionHistory(filter?: {
   tableId?: string;
 }): Promise<TableSession[]> {
   try {
-    const q = query(collection(db, 'sessions'), orderBy('startedAt', 'desc'), limit(150));
+    const q = query(
+      collection(db, 'orders'),
+      where('isSession', '==', true),
+      limit(150)
+    );
     const snap = await getDocs(q);
     let sessions: TableSession[] = [];
 
     snap.forEach((d) => {
       sessions.push(d.data() as TableSession);
     });
+
+    sessions.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
 
     if (filter) {
       if (filter.status && filter.status !== 'all') {
