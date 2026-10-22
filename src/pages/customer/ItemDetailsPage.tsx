@@ -39,8 +39,7 @@ export default function ItemDetailsPage() {
   const walkTime = Math.round(item.calories / 5);
   const existingCartItem = items.find((i) => i.id === item.id);
   
-  const isBurger = item.name.toLowerCase().includes('burger');
-  const actualModelUrl = item.modelUrl || (isBurger ? '/models/burger.glb' : undefined);
+  const actualModelUrl = item.modelUrl || item.modelUrlAr;
 
   const displayName = getMenuItemName(item, lang);
   const displayDescription = getMenuItemDescription(item, lang);
@@ -69,7 +68,7 @@ export default function ItemDetailsPage() {
           {actualModelUrl && (
             <ModelViewerModal
               modelUrl={actualModelUrl}
-              modelUrlAr={item.modelUrlAr || (isBurger ? '/models/burger-optimized.glb' : undefined)}
+              modelUrlAr={item.modelUrlAr || actualModelUrl}
               poster={item.image}
               itemName={displayName}
               buttonClassName="mt-6 w-full flex items-center justify-center gap-2 border border-border text-text-primary px-8 py-4 rounded-full text-[10px] font-bold uppercase tracking-widest hover:border-text-secondary transition-colors"

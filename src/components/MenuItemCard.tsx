@@ -28,8 +28,7 @@ export const MenuItemCard: React.FC<Props> = memo(({
   const walkTime = Math.round(item.calories / 5);
   const navigate = useNavigate();
   
-  const isBurger = item.name.toLowerCase().includes('burger');
-  const actualModelUrl = item.modelUrl || (isBurger ? '/models/burger.glb' : undefined);
+  const actualModelUrl = item.modelUrl || item.modelUrlAr;
 
   const displayName = getMenuItemName(item, lang);
   const displayDescription = getMenuItemDescription(item, lang);
@@ -115,7 +114,7 @@ export const MenuItemCard: React.FC<Props> = memo(({
           {actualModelUrl && (
             <ModelViewerModal 
               modelUrl={actualModelUrl} 
-              modelUrlAr={item.modelUrlAr || (isBurger ? '/models/burger-optimized.glb' : undefined)}
+              modelUrlAr={item.modelUrlAr || actualModelUrl}
               poster={item.image}
               itemName={displayName} 
             />
