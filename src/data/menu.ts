@@ -33,6 +33,7 @@ export interface MenuItem {
   maxPerOrder?: number;
   modelUrl?: string;
   modelUrlAr?: string;
+  iosSrc?: string;
   translations?: Record<string, MenuItemTranslation>;
 }
 
@@ -118,8 +119,8 @@ export const MENU_DATA: MenuCategory[] = [
         tags: [],
         available: true,
         maxPerOrder: 20,
-        modelUrl: '/models/burger-optimized.glb',
-        modelUrlAr: '/models/burger-optimized.glb',
+        modelUrl: '/models/burger.glb',
+        modelUrlAr: '/models/ar/burger-ar.glb',
         translations: DISH_TRANSLATIONS.s4,
       },
     ],
@@ -166,7 +167,7 @@ export const MENU_DATA: MenuCategory[] = [
         calories: 540,
         image: 'https://images.unsplash.com/photo-1564834724105-918b73d1b9e0?q=80&w=1976&auto=format&fit=crop',
         tags: [DIETARY_TAGS.spicy, DIETARY_TAGS.df],
-        modelUrl: '/models/ar/roasted-chicken-ar.glb',
+        modelUrl: '/models/roasted-chicken.glb',
         modelUrlAr: '/models/ar/roasted-chicken-ar.glb',
         translations: DISH_TRANSLATIONS.m4,
       },
@@ -180,7 +181,7 @@ export const MENU_DATA: MenuCategory[] = [
         tags: [DIETARY_TAGS.v],
         available: true,
         maxPerOrder: 20,
-        modelUrl: '/models/ar/pizza-ar.glb',
+        modelUrl: '/models/pizza.glb',
         modelUrlAr: '/models/ar/pizza-ar.glb',
       },
     ],

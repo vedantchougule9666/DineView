@@ -115,6 +115,7 @@ export const MenuItemCard: React.FC<Props> = memo(({
             <ModelViewerModal 
               modelUrl={actualModelUrl} 
               modelUrlAr={item.modelUrlAr || actualModelUrl}
+              iosSrc={item.iosSrc}
               poster={item.image}
               itemName={displayName} 
             />
@@ -174,6 +175,7 @@ export const MenuItemCard: React.FC<Props> = memo(({
          p.maxPerOrder === n.maxPerOrder && 
          p.modelUrl === n.modelUrl && 
          p.modelUrlAr === n.modelUrlAr && 
+         p.iosSrc === n.iosSrc && 
          prevProps.cartQuantity === nextProps.cartQuantity && 
          prevProps.cartItemId === nextProps.cartItemId && 
          prevProps.lang === nextProps.lang && 

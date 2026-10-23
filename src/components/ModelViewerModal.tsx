@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { X, Box, Loader2 } from 'lucide-react';
+import { X, Box, Loader2, Sparkles, Smartphone, RotateCcw } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 
 export interface ModelViewerModalProps {
@@ -10,6 +10,8 @@ export interface ModelViewerModalProps {
   itemName: string;
   buttonClassName?: string;
   iconClassName?: string;
+  cameraOrbit?: string;
+  cameraTarget?: string;
 }
 
 interface ToastState {
@@ -18,27 +20,19 @@ interface ToastState {
 }
 
 /**
- * Resolves a model path to an absolute, public URL with open CORS (access-control-allow-origin: *).
- * 
- * Google Scene Viewer runs in an external Android system process (com.google.android.googlequicksearchbox).
- * In Cloud Run preview environments (*.run.app), external requests without browser authentication cookies
- * are redirected with HTTP 302 to /__cookie_check.html, causing Scene Viewer to fail with "Couldn't load object".
- * Routing via the public GitHub raw asset URL provides an open, unauthenticated binary payload that Scene Viewer
- * and Apple Quick Look can download cleanly.
+ * Resolves a model path to an absolute URL accessible by the browser and AR engines.
  */
 export function getPublicModelUrl(path?: string): string | undefined {
   if (!path) return undefined;
+
+  // Safeguard: Do not serve dummy/placeholder USDZ files for iOS Quick Look
+  if (path.endsWith('.usdz') && path.includes('mock')) {
+    return undefined;
+  }
+
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
 
   const clean = path.replace(/^\//, '');
-
-  // For Cloud Run environments (*.run.app), unauthenticated external fetchers like Google Scene Viewer
-  // are blocked by Cloud Run authentication cookies (HTTP 302 redirect to /__cookie_check.html).
-  // Routing through jsDelivr edge CDN serves the binary with open CORS (access-control-allow-origin: *)
-  // and the standard 'model/gltf-binary' content-type that Scene Viewer and Quick Look strictly require.
-  if (typeof window !== 'undefined' && window.location.hostname.includes('.run.app')) {
-    return `https://cdn.jsdelivr.net/gh/vedantchougule9666/DineView@main/public/${clean}`;
-  }
 
   if (typeof window !== 'undefined' && window.location.origin) {
     return `${window.location.origin}/${clean}`;
@@ -54,39 +48,59 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
   poster,
   itemName, 
   buttonClassName, 
-  iconClassName 
+  iconClassName,
+  cameraOrbit,
+  cameraTarget
 }) => {
   const { t } = useLanguage();
+
+  // Detect dish types to set optimal camera orbit and elevation
+  const isPizza = Boolean(
+    (modelUrl && modelUrl.includes('pizza')) || 
+    (itemName && itemName.toLowerCase().includes('pizza'))
+  );
+
+  const effectiveCameraOrbit = cameraOrbit || (isPizza ? "0deg 65deg 105%" : "0deg 75deg 105%");
+  const effectiveCameraTarget = cameraTarget || (isPizza ? "0m 0.02m 0m" : "auto auto auto");
+
   const [modelViewerReady, setModelViewerReady] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [canAR, setCanAR] = useState(false);
   const [isLaunchingAr, setIsLaunchingAr] = useState(false);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
   
   const visibleViewerRef = useRef<any>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const launchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Local model URL relative to current host (clean direct mapping)
-  const localModelUrl = modelUrlAr || modelUrl;
-
-  // Fully-qualified public URL with open CORS and no cookie restrictions for Scene Viewer / Quick Look
-  const publicModelUrl = getPublicModelUrl(localModelUrl) || localModelUrl;
-  
-  // Only use explicit iosSrc if provided as a prop; otherwise let model-viewer convert the full GLB dynamically
+  // Dedicated URLs: high-quality hero model for 3D viewer, optimized model for AR
+  const public3DModelUrl = getPublicModelUrl(modelUrl) || modelUrl;
+  const effectiveArUrl = modelUrlAr || modelUrl;
+  const publicArModelUrl = getPublicModelUrl(effectiveArUrl) || effectiveArUrl;
   const publicIosSrc = iosSrc ? getPublicModelUrl(iosSrc) : undefined;
 
-  // Active model URL (defaults to public CORS URL, falls back to local if needed)
-  const [activeModelUrl, setActiveModelUrl] = useState(() => publicModelUrl);
+  const [active3DModelUrl, setActive3DModelUrl] = useState(() => public3DModelUrl);
+  const [arModelLoaded, setArModelLoaded] = useState(false);
+  const [arReadyToActivate, setArReadyToActivate] = useState(false);
+
+  // Check device type
+  useEffect(() => {
+    if (typeof navigator !== 'undefined') {
+      const mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      setIsMobile(mobile);
+    }
+  }, []);
 
   useEffect(() => {
-    setActiveModelUrl(publicModelUrl);
+    setActive3DModelUrl(public3DModelUrl);
     setIsModelLoaded(false);
     setLoadProgress(0);
     setLoadError(null);
-  }, [publicModelUrl]);
+  }, [public3DModelUrl]);
 
   // Dynamically load @google/model-viewer in background
   useEffect(() => {
@@ -97,6 +111,43 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
         .then(() => setModelViewerReady(true))
         .catch((err) => console.error('Failed to load @google/model-viewer:', err));
     }
+  }, []);
+
+  // Listen for hashchange, visibility changes, and window focus to detect when Scene Viewer / WebXR returns or fails
+  useEffect(() => {
+    const handleHashChange = () => {
+      if (window.location.hash.includes('model-viewer-no-ar-fallback')) {
+        console.log('[DineView AR] Handled #model-viewer-no-ar-fallback');
+        setIsLaunchingAr(false);
+        setArReadyToActivate(false);
+        setToast(null);
+        if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+        try {
+          window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        } catch {
+          // Ignore
+        }
+      }
+    };
+
+    const handleTabActive = () => {
+      if (document.visibilityState === 'visible') {
+        setIsLaunchingAr(false);
+        setArReadyToActivate(false);
+        setToast(null);
+        if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+      }
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    document.addEventListener('visibilitychange', handleTabActive);
+    window.addEventListener('focus', handleTabActive);
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      document.removeEventListener('visibilitychange', handleTabActive);
+      window.removeEventListener('focus', handleTabActive);
+    };
   }, []);
 
   // Prevent scrolling on the body when modal is open
@@ -118,12 +169,11 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     }
   }, [showModal]);
 
-  // Clean up toast timer on unmount
+  // Clean up timers on unmount
   useEffect(() => {
     return () => {
-      if (toastTimeoutRef.current) {
-        clearTimeout(toastTimeoutRef.current);
-      }
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
     };
   }, []);
 
@@ -137,16 +187,24 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     }, duration);
   }, []);
 
-  // Attach event listeners to visible viewer when modal is opened
+  // Reset state when modal closes
   useEffect(() => {
     if (!showModal) {
-      setCanAR(false);
       setIsLaunchingAr(false);
+      setArReadyToActivate(false);
+      setArModelLoaded(false);
       setIsModelLoaded(false);
       setLoadProgress(0);
       setLoadError(null);
-      return;
+      if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      setToast(null);
     }
+  }, [showModal]);
+
+  // Attach event listeners to visible 3D model-viewer
+  useEffect(() => {
+    if (!showModal) return;
 
     const viewer = visibleViewerRef.current;
     if (!viewer) return;
@@ -160,96 +218,188 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
       setIsModelLoaded(true);
       setLoadProgress(100);
       setLoadError(null);
-      // Check device AR capability once model element is loaded
-      if (typeof viewer.canActivateAR === 'boolean') {
-        setCanAR(viewer.canActivateAR);
-      }
-    };
-
-    const handleArStatus = (e: any) => {
-      const status = e.detail?.status;
-      console.log('[DineView AR] Status:', status);
-      if (status === 'session-started' || status === 'object-placed') {
-        setIsLaunchingAr(false);
-        setToast(null);
-      } else if (status === 'failed') {
-        setIsLaunchingAr(false);
-        showToast('error', t.ar_failed || 'AR session could not be started on this device.');
-      } else if (status === 'not-presenting') {
-        setIsLaunchingAr(false);
-      }
     };
 
     const handleError = (e: any) => {
-      console.warn('[DineView 3D] Model viewer error:', e);
-      setIsLaunchingAr(false);
-      // If the CDN URL fails, seamlessly fall back to local path
-      if (activeModelUrl !== localModelUrl) {
-        console.log('[DineView 3D] Switching to local model fallback:', localModelUrl);
-        setActiveModelUrl(localModelUrl);
+      console.warn('[DineView 3D] Model viewer error event:', e);
+      if (active3DModelUrl !== public3DModelUrl) {
+        console.log('[DineView 3D] Retrying with public3DModelUrl:', public3DModelUrl);
+        setActive3DModelUrl(public3DModelUrl);
       } else {
-        setLoadError('Unable to load 3D model. Please check network connection.');
+        setLoadError('Unable to load 3D model asset. Please check network connection.');
       }
     };
 
     viewer.addEventListener('progress', handleProgress);
     viewer.addEventListener('load', handleLoad);
-    viewer.addEventListener('ar-status', handleArStatus);
     viewer.addEventListener('error', handleError);
 
-    // Initial check in case it's already cached/loaded
     if (viewer.loaded) {
       setIsModelLoaded(true);
       setLoadProgress(100);
-      if (typeof viewer.canActivateAR === 'boolean') {
-        setCanAR(viewer.canActivateAR);
-      }
     }
 
     return () => {
       viewer.removeEventListener('progress', handleProgress);
       viewer.removeEventListener('load', handleLoad);
-      viewer.removeEventListener('ar-status', handleArStatus);
       viewer.removeEventListener('error', handleError);
     };
-  }, [showModal, showToast, activeModelUrl, localModelUrl, t]);
+  }, [showModal, active3DModelUrl, public3DModelUrl]);
 
-  // Explicit AR launch triggered by user clicking the AR button inside the 3D viewer
-  const handleLaunchAR = async (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const arViewerRef = useRef<any>(null);
 
-    const viewer = visibleViewerRef.current;
-    if (!viewer) return;
+  // Attach event listeners to the dedicated AR viewer when mounted
+  useEffect(() => {
+    if (!showModal) return;
 
-    if (viewer.canActivateAR === false) {
-      showToast('info', t.ar_not_supported || 'AR is not supported on this device/browser.');
-      return;
-    }
+    const arViewer = arViewerRef.current;
+    if (!arViewer) return;
 
-    if (!isModelLoaded) {
-      showToast('info', '3D model is still preparing, please wait a moment…');
-      return;
-    }
+    const handleArLoad = async () => {
+      console.log('[DineView AR] AR model preloaded successfully');
+      setArModelLoaded(true);
 
-    try {
-      setIsLaunchingAr(true);
-      showToast('loading', t.preparing_ar || 'Preparing AR…', 10000);
-      await viewer.activateAR();
-    } catch (err: any) {
-      console.warn('[DineView AR] activateAR error:', err);
-      setIsLaunchingAr(false);
-      const errStr = String(err?.message || err || '').toLowerCase();
-      if (!errStr.includes('cancel') && !errStr.includes('abort')) {
-        showToast('error', t.ar_failed || 'Unable to start AR session.');
-      } else {
-        setToast(null);
+      // If user had already clicked "View in AR" before load finished
+      if (isLaunchingAr) {
+        try {
+          await arViewer.activateAR();
+        } catch (err: any) {
+          console.warn('[DineView AR] activateAR direct call exception:', err);
+          const errStr = String(err?.message || err || '').toLowerCase();
+          if (errStr.includes('gesture') || errStr.includes('user') || errStr.includes('activation')) {
+            setArReadyToActivate(true);
+            setIsLaunchingAr(false);
+            if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+            showToast('info', '3D model is ready! Tap "Enter AR" to place it on your table.', 6000);
+          } else if (!errStr.includes('cancel') && !errStr.includes('abort')) {
+            setIsLaunchingAr(false);
+            if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+            showToast('error', 'AR is not supported on this browser or device. Explore the dish in 3D right here.');
+          } else {
+            setIsLaunchingAr(false);
+            if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+            setToast(null);
+          }
+        }
       }
+    };
+
+    const handleArStatus = (e: any) => {
+      const status = e.detail?.status;
+      console.log('[DineView AR] ar-status event:', status);
+      if (status === 'session-started' || status === 'object-placed') {
+        setIsLaunchingAr(false);
+        setArReadyToActivate(false);
+        setToast(null);
+        if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+      } else if (status === 'failed') {
+        setIsLaunchingAr(false);
+        setArReadyToActivate(false);
+        if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+        showToast('error', 'AR session could not be started. You can inspect the dish in 3D right here.');
+      } else if (status === 'not-presenting') {
+        setIsLaunchingAr(false);
+        setArReadyToActivate(false);
+        if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+      }
+    };
+
+    const handleArError = (e: any) => {
+      console.error('[DineView AR] AR viewer error:', e);
+      setIsLaunchingAr(false);
+      setArReadyToActivate(false);
+      if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+      showToast('error', 'Failed to load AR model asset. Please retry.');
+    };
+
+    arViewer.addEventListener('load', handleArLoad);
+    arViewer.addEventListener('ar-status', handleArStatus);
+    arViewer.addEventListener('error', handleArError);
+
+    if (arViewer.loaded) {
+      setArModelLoaded(true);
     }
+
+    return () => {
+      arViewer.removeEventListener('load', handleArLoad);
+      arViewer.removeEventListener('ar-status', handleArStatus);
+      arViewer.removeEventListener('error', handleArError);
+    };
+  }, [showModal, isLaunchingAr, showToast]);
+
+  // Synchronous user-gesture AR launch
+  const handleLaunchAR = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+
+    // Prevent multi-clicks while launching
+    if (isLaunchingAr && !arReadyToActivate) return;
+
+    // Detect iOS devices
+    const isIOS = typeof navigator !== 'undefined' && (
+      /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    );
+
+    // If on desktop without AR hardware, guide user to mobile
+    const currentViewer = arViewerRef.current || visibleViewerRef.current;
+    if (!isMobile && currentViewer && !currentViewer.canActivateAR) {
+      showToast('info', 'AR table view is designed for mobile devices with camera tracking. Open DineView on your phone to view this dish on your table! You can also rotate and zoom in 3D right here.', 6000);
+      return;
+    }
+
+    // If on iOS and dummy/missing USDZ, inform user gracefully
+    if (isIOS && !publicIosSrc && currentViewer && !currentViewer.canActivateAR) {
+      showToast('info', 'AR Quick Look requires an iOS-compatible asset. Showing interactive 3D view.', 4500);
+      return;
+    }
+
+    // If already loaded and ready to activate, launch synchronously in this user gesture
+    if (arViewerRef.current && (arModelLoaded || arViewerRef.current.loaded)) {
+      setIsLaunchingAr(true);
+      showToast('loading', t.preparing_ar || 'Preparing AR…', 8000);
+
+      if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+      launchTimeoutRef.current = setTimeout(() => {
+        setIsLaunchingAr(false);
+        setArReadyToActivate(false);
+        showToast('error', 'AR launch timed out. Please tap to try again or inspect in 3D.');
+      }, 10000);
+
+      try {
+        await arViewerRef.current.activateAR();
+      } catch (err: any) {
+        console.warn('[DineView AR] direct activateAR click error:', err);
+        setIsLaunchingAr(false);
+        if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+        const errStr = String(err?.message || err || '').toLowerCase();
+        if (errStr.includes('gesture') || errStr.includes('user') || errStr.includes('activation')) {
+          setArReadyToActivate(true);
+          showToast('info', 'Tap "Enter AR" to place the dish on your table.', 5000);
+        } else if (!errStr.includes('cancel') && !errStr.includes('abort')) {
+          showToast('error', 'AR is not supported on this browser or device. Explore the dish in 3D right here.');
+        } else {
+          setToast(null);
+        }
+      }
+      return;
+    }
+
+    // In case user tapped before AR model finished downloading, start launch state and wait for handleArLoad
+    setIsLaunchingAr(true);
+    showToast('loading', t.preparing_ar || 'Preparing AR…', 10000);
+
+    // Safety timeout: does NOT report false success, reports failure/retry if it times out
+    if (launchTimeoutRef.current) clearTimeout(launchTimeoutRef.current);
+    launchTimeoutRef.current = setTimeout(() => {
+      setIsLaunchingAr(false);
+      setArReadyToActivate(false);
+      showToast('error', 'AR model loading timed out. Please tap to try again or inspect in 3D.');
+    }, 12000);
   };
 
   return (
     <>
-      {/* Trigger Button on dish cards and details page: opens 3D view directly with no errors */}
+      {/* Trigger Button on dish cards and details page */}
       <button 
         type="button"
         onClick={(e) => {
@@ -261,14 +411,14 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
         title="View dish in 3D and Augmented Reality"
       >
         <Box className={iconClassName || "w-3 h-3"} />
-        {t.view_3d || 'VIEW IN 3D'}
+        <span>{t.view_3d || 'VIEW IN 3D'}</span>
       </button>
 
       {/* 
         3D & AR Interactive Modal Dialog:
-        - Shows interactive 3D model with 360-degree rotation and zoom
-        - Includes native AR button for mobile devices with ARCore / iOS Quick Look
-        - Zero unprompted error toasts
+        - Interactive 3D model with 360-degree rotation and zoom
+        - High-visibility "View in AR" button for supported mobile devices
+        - Non-blocking error handling and responsive layout
       */}
       {showModal && (
         <div 
@@ -280,7 +430,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
           aria-modal="true"
           aria-labelledby="modal-3d-title"
         >
-          <div className="relative w-full max-w-4xl h-[80vh] md:h-[85vh] bg-bg-secondary border border-border shadow-2xl rounded-sm flex flex-col overflow-hidden">
+          <div className="relative w-full max-w-4xl h-[82vh] md:h-[85vh] bg-bg-secondary border border-border shadow-2xl rounded-sm flex flex-col overflow-hidden">
             {/* Header */}
             <div className="flex items-center justify-between p-4 md:p-6 border-b border-border/50 bg-bg-primary/40">
               <h3 id="modal-3d-title" className="font-serif text-xl md:text-2xl text-text-primary flex items-center">
@@ -288,23 +438,31 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
               </h3>
               
               <div className="flex items-center gap-2 md:gap-3">
-                {/* Header AR button on devices that support AR */}
-                {canAR && (
-                  <button
-                    type="button"
-                    onClick={handleLaunchAR}
-                    disabled={isLaunchingAr || !isModelLoaded}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-accent text-white text-[11px] font-bold tracking-wider uppercase hover:opacity-90 transition-all active:scale-95 shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={isModelLoaded ? "View in your space with Augmented Reality" : "Model loading…"}
-                  >
-                    {isLaunchingAr ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Box className="w-3.5 h-3.5" />
-                    )}
-                    <span>{isLaunchingAr ? (t.preparing_ar || 'Preparing…') : (t.view_ar || 'View in AR')}</span>
-                  </button>
-                )}
+                {/* Header AR button: Always visible for AR-enabled dishes */}
+                <button
+                  type="button"
+                  onClick={handleLaunchAR}
+                  disabled={isLaunchingAr && !arReadyToActivate}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-bold tracking-wider uppercase transition-all active:scale-95 shadow-sm ${
+                    arReadyToActivate
+                      ? 'bg-amber-500 hover:bg-amber-400 text-neutral-950 font-extrabold ring-2 ring-amber-300 animate-pulse'
+                      : 'bg-accent text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed'
+                  }`}
+                  title={arReadyToActivate ? "Tap to place dish on table" : isModelLoaded ? "View on your table with Augmented Reality" : "Loading 3D model…"}
+                >
+                  {isLaunchingAr ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {isLaunchingAr 
+                      ? (t.preparing_ar || 'Preparing…') 
+                      : arReadyToActivate 
+                      ? 'Enter AR' 
+                      : (t.view_ar || 'View in AR')}
+                  </span>
+                </button>
 
                 <button 
                   type="button"
@@ -321,16 +479,12 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
             <div className="flex-1 w-full bg-[#f8f6f0] relative flex items-center justify-center overflow-hidden">
               {modelViewerReady ? (
                 <>
+                  {/* Visible 3D Hero Viewer (loads high-quality model, handles 360 inspection) */}
                   <model-viewer
                     ref={visibleViewerRef}
-                    src={activeModelUrl}
-                    ios-src={publicIosSrc || undefined}
+                    src={active3DModelUrl}
                     alt={itemName}
                     poster={poster || undefined}
-                    ar
-                    ar-modes="webxr scene-viewer quick-look"
-                    ar-scale="fixed"
-                    ar-placement="floor"
                     camera-controls
                     touch-action="pan-y"
                     exposure="1"
@@ -338,28 +492,70 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                     shadow-softness="0.5"
                     environment-image="neutral"
                     auto-rotate
-                    camera-orbit="0deg 75deg 105%"
+                    camera-orbit={effectiveCameraOrbit}
+                    camera-target={effectiveCameraTarget}
                     min-camera-orbit="auto 20deg auto"
                     max-camera-orbit="auto 88deg auto"
                     interaction-prompt="auto"
                     reveal="auto"
+                    ar
+                    ar-modes="webxr scene-viewer quick-look"
+                    ar-placement="floor"
+                    ar-scale="fixed"
                     style={{ width: '100%', height: '100%', backgroundColor: 'transparent' }}
                   >
-                    {/* Floating slot AR button: model-viewer automatically displays this on supported mobile devices */}
-                    <button
-                      slot="ar-button"
-                      onClick={handleLaunchAR}
-                      disabled={isLaunchingAr || !isModelLoaded}
-                      className="absolute bottom-5 right-5 z-10 flex items-center gap-2 bg-neutral-900/95 text-white backdrop-blur-md px-4 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider shadow-xl hover:bg-black transition-all hover:scale-105 active:scale-95 cursor-pointer border border-neutral-700/60 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isLaunchingAr ? (
-                        <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
-                      ) : (
-                        <Box className="w-4 h-4 text-amber-400" />
-                      )}
-                      <span>{isLaunchingAr ? (t.preparing_ar || 'Preparing…') : (t.view_ar || 'View in AR')}</span>
-                    </button>
+                    <div slot="ar-button" style={{ display: 'none' }} />
                   </model-viewer>
+
+                  {/* Dedicated preloaded AR Viewer (loads optimized AR asset and anchors immediately to horizontal floor/tabletop) */}
+                  <model-viewer
+                    ref={arViewerRef}
+                    src={publicArModelUrl}
+                    ios-src={publicIosSrc || undefined}
+                    alt={`${itemName} AR`}
+                    ar
+                    ar-modes="webxr scene-viewer quick-look"
+                    ar-placement="floor"
+                    ar-scale="fixed"
+                    quick-look-browsers="safari chrome"
+                    loading="eager"
+                    reveal="auto"
+                    camera-controls
+                    environment-image="neutral"
+                    shadow-intensity="1"
+                    shadow-softness="0.5"
+                    style={{ position: 'absolute', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none', zIndex: -1 }}
+                  >
+                    <div slot="ar-button" style={{ display: 'none' }} />
+                  </model-viewer>
+
+                  {/* Floating in-viewport AR trigger button */}
+                  <button
+                    type="button"
+                    onClick={handleLaunchAR}
+                    disabled={isLaunchingAr && !arReadyToActivate}
+                    className={`absolute bottom-5 right-5 z-10 flex items-center gap-2 px-4 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider shadow-xl transition-all cursor-pointer border ${
+                      arReadyToActivate
+                        ? 'bg-amber-500 hover:bg-amber-400 text-neutral-950 font-extrabold ring-4 ring-amber-400/40 animate-bounce'
+                        : 'bg-neutral-900/95 text-white backdrop-blur-md hover:bg-black hover:scale-105 active:scale-95 border-neutral-700/60 disabled:opacity-50 disabled:cursor-not-allowed'
+                    }`}
+                    title={arReadyToActivate ? "Tap to place dish on table" : isModelLoaded ? "View on your table with Augmented Reality" : "Loading 3D model…"}
+                  >
+                    {isLaunchingAr ? (
+                      <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+                    ) : arReadyToActivate ? (
+                      <Sparkles className="w-4 h-4 text-neutral-950" />
+                    ) : (
+                      <Smartphone className="w-4 h-4 text-amber-400" />
+                    )}
+                    <span>
+                      {isLaunchingAr 
+                        ? (t.preparing_ar || 'Preparing AR…') 
+                        : arReadyToActivate 
+                        ? 'Enter AR' 
+                        : (t.view_ar || 'View in AR')}
+                    </span>
+                  </button>
 
                   {/* Loading progress overlay */}
                   {!isModelLoaded && !loadError && (
@@ -398,7 +594,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                             const cur = viewer.src;
                             viewer.src = '';
                             setTimeout(() => {
-                              viewer.src = cur || localModelUrl;
+                              viewer.src = cur || public3DModelUrl;
                             }, 50);
                           }
                         }}
@@ -422,10 +618,13 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
             {/* Footer helper info */}
             <div className="p-4 bg-bg-secondary border-t border-border/50 flex flex-col sm:flex-row items-center justify-between text-xs md:text-sm text-text-muted gap-2">
               <span>{t.instructions_3d || 'Drag to rotate • Pinch or scroll to zoom'}</span>
-              <span className="text-[11px] font-sans text-text-muted/80">3D Interactive Viewer</span>
+              <span className="text-[11px] font-sans text-text-muted/80 flex items-center gap-1.5">
+                <Box className="w-3.5 h-3.5 text-accent" />
+                <span>Supports WebXR & 360° Inspection</span>
+              </span>
             </div>
 
-            {/* In-Modal Toast Notification: only shown if user clicks AR and there is an active status */}
+            {/* In-Modal Toast Notification */}
             {toast && (
               <div 
                 className="absolute bottom-16 left-1/2 -translate-x-1/2 z-[120] max-w-[90%] sm:max-w-md w-full px-4 animate-in fade-in slide-in-from-bottom-2 duration-200 pointer-events-auto"
